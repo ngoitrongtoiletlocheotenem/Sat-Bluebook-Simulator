@@ -1,0 +1,225 @@
+.highlights-notes-panel {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: 280px;
+  min-width: 0;
+  height: 100%;
+  min-height: 0;
+  flex: 0 0 280px;
+  align-self: stretch;
+  overflow: hidden;
+  color: #242424;
+  background: #f0f0f0;
+  font-family: Arial, Helvetica, sans-serif;
+  text-align: left;
+  box-sizing: border-box;
+}
+
+.highlights-notes-panel *,
+.highlights-notes-panel *::before,
+.highlights-notes-panel *::after {
+  box-sizing: border-box;
+}
+
+.highlights-notes-panel .notes-panel-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+}
+
+.highlights-notes-panel .notes-panel-utilities {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  min-height: 35px;
+  flex: 0 0 auto;
+  padding: 4px 8px 2px;
+}
+
+.highlights-notes-panel button {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  color: inherit;
+  background: transparent;
+  font: inherit;
+  cursor: pointer;
+}
+
+.highlights-notes-panel .notes-panel-close {
+  width: 29px;
+  height: 27px;
+  border-radius: 4px;
+  color: #515151;
+}
+
+.highlights-notes-panel .notes-panel-close svg:first-child {
+  margin-right: -7px;
+}
+
+.highlights-notes-panel .notes-panel-close:hover {
+  background: #e2e2e2;
+}
+
+.highlights-notes-panel button:focus-visible,
+.highlights-notes-panel textarea:focus-visible {
+  outline: 3px solid #0077c8;
+  outline-offset: 3px;
+}
+
+.highlights-notes-panel button:disabled,
+.highlights-notes-panel textarea:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.highlights-notes-panel .notes-panel-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 3px 13px 20px;
+  overflow: auto;
+  scrollbar-width: thin;
+  scrollbar-color: #b7b7b7 #f0f0f0;
+}
+
+.highlights-notes-panel .highlight-note-card,
+.highlights-notes-panel .question-note-card {
+  margin: 0 0 15px;
+  overflow: hidden;
+  border: 1.5px solid #6f6f6f;
+  border-radius: 10px;
+  background: #fff;
+}
+
+.highlights-notes-panel .note-card-selected {
+  border-color: #393939;
+}
+
+.highlights-notes-panel .note-card-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 9px;
+  padding: 11px 9px 11px 12px;
+}
+
+.highlights-notes-panel .note-color-yellow .note-card-heading {
+  background: #fff8ce;
+}
+
+.highlights-notes-panel .note-color-blue .note-card-heading {
+  background: #e3f2ff;
+}
+
+.highlights-notes-panel .note-color-pink .note-card-heading {
+  background: #fce3f4;
+}
+
+.highlights-notes-panel .note-quote {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 0;
+  margin: 0;
+  border: 0;
+  color: #242424;
+  font:
+    600 14px/1.48 Arial,
+    Helvetica,
+    sans-serif;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.highlights-notes-panel .note-delete {
+  width: 32px;
+  height: 32px;
+  flex: 0 0 32px;
+  border: 1px solid #a4a4a4;
+  border-radius: 50%;
+  color: #363636;
+  background: #fff;
+}
+
+.highlights-notes-panel .note-delete:hover:not(:disabled) {
+  border-color: #4b4b4b;
+  box-shadow: 0 0 0 2px #ffffffa6;
+}
+
+.highlights-notes-panel .highlight-note-textarea {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  min-height: 70px;
+  max-height: 400px;
+  margin: 0;
+  padding: 12px;
+  border: 0;
+  border-radius: 0;
+  color: #242424;
+  background: #fff;
+  font:
+    14px/1.55 Arial,
+    Helvetica,
+    sans-serif;
+  resize: vertical;
+}
+
+.highlights-notes-panel .highlight-note-textarea::placeholder {
+  color: #777;
+  opacity: 1;
+}
+
+.highlights-notes-panel .highlight-note-textarea:focus-visible {
+  position: relative;
+  outline-offset: -3px;
+}
+
+.highlights-notes-panel .question-note-card label {
+  display: block;
+  padding: 11px 12px;
+  margin: 0;
+  color: #363636;
+  background: #e7e7e7;
+  font:
+    600 14px/1.48 Arial,
+    Helvetica,
+    sans-serif;
+}
+
+.highlights-notes-panel .notes-panel-empty {
+  margin: 10px 1px 22px;
+  padding: 0;
+  color: #5c5c5c;
+  font:
+    13px/1.6 Arial,
+    Helvetica,
+    sans-serif;
+}
+
+.highlights-notes-icon {
+  display: block;
+  width: 52px;
+  height: 27px;
+  flex: 0 0 auto;
+}
+
+@media (max-width: 900px) {
+  .highlights-notes-panel {
+    width: 230px;
+    flex-basis: 230px;
+  }
+
+  .highlights-notes-panel .notes-panel-scroll {
+    padding-right: 10px;
+    padding-left: 10px;
+  }
+}

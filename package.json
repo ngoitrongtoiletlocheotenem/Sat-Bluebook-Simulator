@@ -1,0 +1,78 @@
+{
+  "name": "pathwise-sat",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.13"
+  },
+  "scripts": {
+    "dev": "concurrently -k -n api,web \"tsx watch server/index.ts\" \"vite --host 127.0.0.1\"",
+    "build": "node scripts/build.mjs",
+    "start": "node dist-server/index.js",
+    "db:migrate": "tsx server/cli.ts migrate",
+    "db:seed": "tsx server/cli.ts seed",
+    "admin": "tsx server/cli.ts admin",
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --test server/**/*.test.ts",
+    "test:e2e": "playwright test",
+    "lint": "eslint client shared server tests",
+    "format": "prettier --write client shared server tests *.json *.ts docs README.md",
+    "format:check": "prettier --check client shared server tests *.json *.ts docs README.md",
+    "check": "npm run lint && npm run typecheck && npm test && npm run build",
+    "test:desmos": "node scripts/smoke-desmos.mjs"
+  },
+  "dependencies": {
+    "bcryptjs": "^3.0.2",
+    "better-sqlite3": "^12.4.0",
+    "cookie-parser": "^1.4.7",
+    "csv-parse": "^7.0.3",
+    "dompurify": "^3.3.0",
+    "dotenv": "^17.2.0",
+    "exceljs": "^4.4.0",
+    "express": "^5.1.0",
+    "express-rate-limit": "^8.1.0",
+    "helmet": "^8.1.0",
+    "katex": "^0.19.0",
+    "knex": "^3.1.0",
+    "lucide-react": "^0.468.0",
+    "multer": "^2.0.2",
+    "pg": "^8.16.3",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "react-router-dom": "^7.9.0",
+    "sanitize-html": "^2.17.0",
+    "zod": "^4.1.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.56.0",
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/cookie-parser": "^1.4.9",
+    "@types/express": "^5.0.0",
+    "@types/katex": "^0.16.7",
+    "@types/multer": "^2.0.0",
+    "@types/node": "^24.0.0",
+    "@types/pg": "^8.15.5",
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "@types/sanitize-html": "^2.16.0",
+    "@types/supertest": "^6.0.3",
+    "@vitejs/plugin-react": "^5.0.0",
+    "concurrently": "^9.2.0",
+    "eslint": "^9.36.0",
+    "eslint-plugin-react-hooks": "^5.2.0",
+    "prettier": "^3.6.0",
+    "supertest": "^7.1.4",
+    "tsup": "^8.5.0",
+    "tsx": "^4.20.0",
+    "typescript": "^5.9.0",
+    "typescript-eslint": "^8.44.0",
+    "vite": "^7.1.0"
+  },
+  "overrides": {
+    "exceljs": {
+      "uuid": "^11.1.1"
+    },
+    "esbuild": "^0.28.1"
+  }
+}

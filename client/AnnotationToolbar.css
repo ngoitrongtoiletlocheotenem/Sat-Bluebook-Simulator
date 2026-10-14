@@ -1,0 +1,284 @@
+.annotation-toolbar {
+  position: fixed;
+  z-index: 70;
+  width: max-content;
+  max-width: calc(100vw - 16px);
+  color: #17191b;
+  font-family: Arial, Helvetica, sans-serif;
+  line-height: 1;
+  text-align: left;
+  isolation: isolate;
+}
+
+.annotation-toolbar *,
+.annotation-toolbar *::before,
+.annotation-toolbar *::after {
+  box-sizing: border-box;
+}
+
+.annotation-toolbar .annotation-palette {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 68px;
+  padding: 10px 13px;
+  width: max-content;
+  max-width: 100%;
+  border: 1px solid #ededed;
+  border-radius: 999px;
+  background: #fff;
+  box-shadow:
+    0 2px 12px #00000029,
+    0 1px 3px #00000012;
+}
+
+.annotation-toolbar button {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  color: inherit;
+  background: transparent;
+  font: inherit;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.annotation-toolbar button:focus-visible,
+.annotation-toolbar textarea:focus-visible {
+  outline: 3px solid #0077c8;
+  outline-offset: 4px;
+}
+
+.annotation-toolbar button:disabled {
+  cursor: default;
+  opacity: 0.38;
+}
+
+.annotation-toolbar .annotation-color-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.annotation-toolbar .annotation-swatch,
+.annotation-toolbar .annotation-round-button {
+  width: 46px;
+  height: 46px;
+  border: 2px solid #777c80;
+  border-radius: 50%;
+}
+
+.annotation-toolbar .annotation-swatch-yellow {
+  background: #fff9d6;
+}
+
+.annotation-toolbar .annotation-swatch-blue {
+  background: #e6f4ff;
+}
+
+.annotation-toolbar .annotation-swatch-pink {
+  background: #fce5f4;
+}
+
+.annotation-toolbar .annotation-swatch[aria-pressed='true'] {
+  border-color: #363a3d;
+  box-shadow: inset 0 0 0 2px #ffffffbd;
+}
+
+.annotation-toolbar .annotation-swatch:hover:not(:disabled),
+.annotation-toolbar .annotation-round-button:hover:not(:disabled) {
+  border-color: #24282b;
+  box-shadow: 0 0 0 3px #0000000c;
+}
+
+.annotation-toolbar .annotation-underline-control {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  height: 46px;
+}
+
+.annotation-toolbar .annotation-underline-toggle {
+  width: 36px;
+  height: 46px;
+  border-radius: 5px;
+}
+
+.annotation-toolbar .annotation-underline-chevron {
+  width: 21px;
+  height: 46px;
+  border-radius: 5px;
+}
+
+.annotation-toolbar .annotation-underline-toggle:hover:not(:disabled),
+.annotation-toolbar .annotation-underline-chevron:hover:not(:disabled) {
+  background: #f3f3f3;
+}
+
+.annotation-toolbar .annotation-u {
+  position: relative;
+  display: inline-block;
+  padding: 0 1px 5px;
+  color: #191b1d;
+  font:
+    600 29px/1 Arial,
+    Helvetica,
+    sans-serif;
+}
+
+.annotation-toolbar .annotation-u::after {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  content: '';
+  border-bottom: 2px solid currentColor;
+}
+
+.annotation-toolbar .annotation-u-dashed::after {
+  border-bottom-style: dashed;
+}
+
+.annotation-toolbar .annotation-u-dotted::after {
+  border-bottom-style: dotted;
+}
+
+.annotation-toolbar .annotation-round-button {
+  color: #363a3d;
+  background: #fff;
+}
+
+.annotation-toolbar .annotation-divider {
+  align-self: stretch;
+  width: 1px;
+  min-height: 38px;
+  margin: 3px -2px;
+  background: #c6c7c8;
+}
+
+.annotation-toolbar .annotation-note-active {
+  border-color: #30363a;
+  background: #f1f3f4;
+}
+
+.annotation-toolbar .annotation-underline-menu {
+  position: absolute;
+  top: calc(100% + 7px);
+  padding: 0;
+  overflow: auto;
+  border: 1px solid #e4e4e4;
+  border-radius: 10px;
+  background: #fff;
+  box-shadow: 0 3px 13px #00000026;
+}
+
+.annotation-toolbar .annotation-underline-menu {
+  left: 170px;
+  display: flex;
+  flex-direction: column;
+  width: 88px;
+  max-height: calc(100vh - 96px);
+  padding: 4px 0;
+}
+
+.annotation-toolbar .annotation-underline-option {
+  width: 100%;
+  min-height: 49px;
+  padding: 8px 14px;
+  color: #26292b;
+  border-radius: 0;
+}
+
+.annotation-toolbar .annotation-underline-option:hover,
+.annotation-toolbar .annotation-underline-option[aria-checked='true'] {
+  background: #f2f2f2;
+}
+
+.annotation-toolbar .annotation-underline-option .annotation-u {
+  font-size: 26px;
+}
+
+.annotation-toolbar .annotation-no-underline {
+  font:
+    14px/1.4 Arial,
+    Helvetica,
+    sans-serif;
+}
+
+.annotation-toolbar.annotation-opens-up .annotation-underline-menu {
+  top: auto;
+  bottom: calc(100% + 7px);
+}
+
+@media (max-width: 420px) {
+  .annotation-toolbar .annotation-palette {
+    gap: 8px;
+    min-height: 62px;
+    padding: 9px 10px;
+  }
+
+  .annotation-toolbar .annotation-swatch,
+  .annotation-toolbar .annotation-round-button {
+    width: 40px;
+    height: 40px;
+  }
+
+  .annotation-toolbar .annotation-color-group {
+    gap: 6px;
+  }
+
+  .annotation-toolbar .annotation-underline-toggle,
+  .annotation-toolbar .annotation-underline-chevron,
+  .annotation-toolbar .annotation-underline-control {
+    height: 40px;
+  }
+
+  .annotation-toolbar .annotation-underline-toggle {
+    width: 30px;
+  }
+
+  .annotation-toolbar .annotation-underline-chevron {
+    width: 17px;
+  }
+
+  .annotation-toolbar .annotation-u {
+    font-size: 26px;
+  }
+
+  .annotation-toolbar .annotation-divider {
+    min-height: 32px;
+  }
+
+  .annotation-toolbar .annotation-underline-menu {
+    left: 140px;
+  }
+}
+
+@media (max-width: 360px) {
+  .annotation-toolbar .annotation-palette {
+    gap: 6px;
+  }
+
+  .annotation-toolbar .annotation-swatch,
+  .annotation-toolbar .annotation-round-button {
+    width: 36px;
+    height: 36px;
+  }
+
+  .annotation-toolbar .annotation-color-group {
+    gap: 5px;
+  }
+
+  .annotation-toolbar .annotation-underline-chevron {
+    width: 16px;
+  }
+
+  .annotation-toolbar .annotation-underline-menu {
+    left: 124px;
+  }
+}

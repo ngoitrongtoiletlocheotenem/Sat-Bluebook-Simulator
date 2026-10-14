@@ -1,0 +1,72 @@
+.notes-resize-handle {
+  position: absolute;
+  top: max(76px, 20%);
+  z-index: 8;
+  width: 28px;
+  height: 44px;
+  transform: translateY(-50%);
+  color: #fff;
+  background: transparent;
+  cursor: col-resize;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  box-sizing: border-box;
+}
+
+.notes-resize-reading {
+  right: -32px;
+}
+
+.notes-resize-math {
+  left: -32px;
+}
+
+.notes-resize-handle .notes-resize-grip {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 30px;
+  transform: translate(-50%, -50%);
+  border-radius: 3px;
+  color: #fff;
+  background: #202020;
+  cursor: inherit;
+}
+
+.notes-resize-handle .notes-resize-grip svg {
+  width: 14px;
+  height: 18px;
+  pointer-events: none;
+}
+
+.notes-resize-handle:hover .notes-resize-grip {
+  background: #070707;
+}
+
+.notes-resize-handle:focus-visible {
+  outline: 0;
+}
+
+.notes-resize-handle:focus-visible .notes-resize-grip {
+  outline: 3px solid #0077c8;
+  outline-offset: 3px;
+}
+
+.notes-resize-disabled {
+  cursor: default;
+}
+
+.notes-resize-disabled .notes-resize-grip {
+  opacity: 0.45;
+}
+
+@media (max-width: 520px) {
+  .notes-resize-handle {
+    display: none;
+  }
+}

@@ -1,0 +1,12 @@
+node_modules/
+dist/
+dist-server/
+.env
+data/
+test-results/
+playwright-report/
+*.log
+docs/screenshots/
+.runtime/
+PRIVATE_LOCAL_ACCESS.md
+docs/API desmos.md
