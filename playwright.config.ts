@@ -37,6 +37,7 @@ export default defineConfig({
     env: {
       NODE_ENV: 'test',
       SQLITE_PATH: `./.runtime/e2e-${randomUUID()}.sqlite`,
+      UPLOAD_DIR: `./.runtime/e2e-uploads-${randomUUID()}`,
       DATABASE_URL: '',
       APP_ORIGIN: 'http://127.0.0.1:5173',
       PORT: '3001',

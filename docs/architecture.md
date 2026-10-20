@@ -9,6 +9,7 @@ The primary reference uses React/TypeScript/Vite. The implementation retains tho
 - `client/App.tsx`: secure-session startup, authentication, navigation and separate player route.
 - `client/Study.tsx`: dashboard, custom practice, history, wrong-question journal and profile.
 - `client/Bank.tsx`: paginated bank, versioned authoring, import preview/confirmation, manual and random blueprint editor, role management.
+- `client/QuestionImages.tsx`: manual per-question image repair inside import previews; uploads use `/api/assets`, draft attachments are saved through `/api/imports/:id/rows/:row/images`, and image bytes are served through `/uploads`.
 - `client/Player.tsx`: immediate local interactions and durable offline action queue; the server remains authoritative for deadlines, locking, routing and grading.
 - `client/NotesResizeHandle.tsx`: accessible notes-panel width adjustment; passage and answer columns retain the original balanced layout.
 - `client/NotesPanel.tsx`: inline notes rail, excerpt cards, note editing and the original combined pen/note icon.
@@ -46,6 +47,7 @@ erDiagram
   USERS ||--o{ ERROR_LOGS : reviews
   QUESTION_VERSIONS ||--o{ ERROR_LOGS : preserves
   USERS ||--o{ IMPORT_JOBS : submits
+  USERS ||--o{ QUESTION_ASSETS : uploads
 ```
 
 ## Design choices

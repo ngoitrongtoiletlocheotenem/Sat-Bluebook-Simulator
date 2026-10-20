@@ -25,7 +25,7 @@ For an administrator, temporarily set **your own** `ADMIN_EMAIL`, `ADMIN_PASSWOR
 
 - **Overview:** genuine history, domain progress, saved session resume and rule-based next practice.
 - **Practice studio:** tutor, custom sets, timed module, full adaptive SAT, mistakes, weak skills and bookmarks; configurable practice timing/seed/accommodations.
-- **Question library:** paginated filtering, private/shared questions, versioned authoring, safe HTML/LaTeX, images, rationales, preview and archives; CSV/XLSX/JSON templates, validation preview and confirmed imports; JSON export.
+- **Question library:** paginated filtering, private/shared questions, versioned authoring, safe HTML/LaTeX, images, rationales, preview and archives; CSV/XLSX/JSON import with per-question manual image repair for missing or unreadable figures, validation preview and confirmation; JSON export.
 - **Test builder:** teacher/admin manual pool selection/reordering, deterministic random pools, strict SAT or custom blueprints, threshold configuration, publication and duplication.
 - **Test player:** focused header/timer/tools, original Reading/Writing split with a resizable notes panel, review mark, independent elimination, an explicitly activated Highlights & Notes mode with an underlined header button and floating palette with three pastel colors, solid/dashed/dotted underlines, autosaved excerpt cards in an inline notes panel, annotation deletion, anchored annotations, navigator, review page, scientific/graph calculator fallback, reference, line reader, keyboard tools, image viewer and reliable resume.
 - **Results:** stored server-graded report, two-column Knowledge and Skills with seven segments, explanations/choice rationales, timing, route and skill/difficulty analysis, mistake retry and print/PDF through the browser.
@@ -72,3 +72,10 @@ Desmos Graphing Calculator is enabled in this workspace using the supplied `docs
 [Reference audit](docs/reference-audit.md) · [research and sources](docs/research.md) · [SAT specification](docs/sat-spec.md) · [architecture/ER diagram](docs/architecture.md) · [database](docs/database.md) · [question import](docs/question-import.md) · [scoring assumptions](docs/scoring.md) · [deployment](docs/deployment.md) · [implementation phases](docs/implementation-plan.md) · [verification](docs/verification.md)
 
 The unlicensed reference client source/fonts/assets were not copied. No College Board branding, copyrighted question bank or unauthorized scraper is included. The local reference projects remain intact.
+
+## AI / developer context
+
+For a complete architecture and codebase context map, see:
+
+- [Agent Memory](AGENT_MEMORY.md)
+- [AI Context Documentation](docs/ai-context/README.md)

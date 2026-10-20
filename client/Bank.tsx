@@ -35,6 +35,7 @@ import { api, download, json } from './api';
 import { Empty, ErrorBox, Loading, Modal, PageHeading, Tag, useApp, useLoad } from './ui';
 
 import { QuestionReview } from './Study';
+import { QuestionImages } from './QuestionImages';
 type BankPage = { items: Question[]; total: number; page: number; pageSize: number };
 function RichEditor({
   label,
@@ -365,6 +366,9 @@ function QuestionEditor({
             </div>
             <div className="image-author">
               <h3>Images and charts</h3>
+              <p className="fine-print">
+                If a figure could not be imported, upload it here to attach it directly to this question.
+              </p>
               <label className="upload-button">
                 <ImagePlus size={17} />
                 Upload PNG, JPEG, WebP
@@ -497,15 +501,29 @@ function QuestionEditor({
     </Modal>
   );
 }
-function ImportQuestions({ onClose, onImported }: { onClose: () => void; onImported: () => void }) {
+function ImportQuestions({
+  onClose,
+  onImported,
+  onManualEntry,
+}: {
+  onClose: () => void;
+  onImported: () => void;
+  onManualEntry: () => void;
+}) {
   const { user, toast } = useApp();
   const [file, setFile] = useState<File | null>(null),
     [preview, setPreview] = useState<ImportPreview | null>(null),
     [scope, setScope] = useState(user.role === 'student' ? 'private' : 'global'),
     [mapping, setMapping] = useState(''),
+    [repairingRow, setRepairingRow] = useState<number | null>(null),
+    [uploadingImages, setUploadingImages] = useState(false),
+    [failedImageRows, setFailedImageRows] = useState<Set<number>>(new Set()),
     [busy, setBusy] = useState(false),
     [error, setError] = useState(''),
     [report, setReport] = useState<{ imported: number; skipped: number; errors: unknown[] } | null>(null);
+  const hasFailedReadyImages = preview?.rows.some(
+    (row) => !row.errors.length && !row.duplicate && failedImageRows.has(row.row),
+  );
   const parse = async () => {
     if (!file) return;
     setBusy(true);
@@ -516,11 +534,24 @@ function ImportQuestions({ onClose, onImported }: { onClose: () => void; onImpor
       f.set('scope', scope);
       if (mapping) f.set('mapping', mapping);
       setPreview(await api<ImportPreview>('/imports/preview', { method: 'POST', body: f }));
+      setFailedImageRows(new Set());
+      setRepairingRow(null);
     } catch (e) {
       setError((e as Error).message);
     } finally {
       setBusy(false);
     }
+  };
+  const saveImages = async (images: string[]) => {
+    const row = repairingRow!;
+    const updated = await api<ImportPreview>(
+      `/imports/${preview!.id}/rows/${row}/images`,
+      json('PATCH', { images }),
+    );
+    setPreview(updated);
+    setFailedImageRows((previous) => new Set([...previous].filter((number) => number !== row)));
+    setRepairingRow(null);
+    toast('Images saved for this question.');
   };
   const confirm = async () => {
     setBusy(true);
@@ -539,7 +570,7 @@ function ImportQuestions({ onClose, onImported }: { onClose: () => void; onImpor
     }
   };
   return (
-    <Modal title="Import your question collection" wide onClose={onClose}>
+    <Modal title="Import your question collection" wide onClose={onClose} closeDisabled={uploadingImages}>
       <div className="import-steps">
         <span className={!preview ? 'active' : ''}>1 · Upload</span>
         <ArrowRight size={15} />
@@ -548,6 +579,14 @@ function ImportQuestions({ onClose, onImported }: { onClose: () => void; onImpor
         <span className={report ? 'active' : ''}>3 · Import report</span>
       </div>
       {error && <ErrorBox message={error} />}
+      {!preview && error && (
+        <div className="import-manual-fallback">
+          <p>If this file cannot be read, enter the question and attach its figures by hand.</p>
+          <button className="secondary" onClick={onManualEntry}>
+            Enter question manually
+          </button>
+        </div>
+      )}
       <p className="muted">
         Bring questions you own or have permission to use. Invalid rows are rejected; duplicates are
         identified before anything is saved.
@@ -561,6 +600,7 @@ function ImportQuestions({ onClose, onImported }: { onClose: () => void; onImpor
             <input
               type="file"
               accept=".csv,.xlsx,.json"
+              aria-label="Upload question file"
               onChange={(e) => setFile(e.target.files?.[0] || null)}
             />
           </label>
@@ -600,7 +640,7 @@ function ImportQuestions({ onClose, onImported }: { onClose: () => void; onImpor
               </button>
             ))}
           </div>
-          <button className="primary" disabled={!file || busy} onClick={parse}>
+          <button className="primary" disabled={!file || busy || uploadingImages} onClick={parse}>
             Parse & preview
             <ArrowRight size={17} />
           </button>
@@ -620,6 +660,10 @@ function ImportQuestions({ onClose, onImported }: { onClose: () => void; onImpor
         </div>
       ) : (
         <>
+          <p className="import-image-help">
+            Check the figures for each question. If an image is missing, unreadable, or was not detected,
+            attach it manually in that row. Text-only questions do not need this step.
+          </p>
           <div className="import-totals">
             <Tag tone="green">{preview.valid} valid</Tag>
             <Tag tone="peach">{preview.invalid} invalid</Tag>
@@ -631,6 +675,7 @@ function ImportQuestions({ onClose, onImported }: { onClose: () => void; onImpor
                 <tr>
                   <th>Row</th>
                   <th>Question</th>
+                  <th>Images & graphs</th>
                   <th>Validation</th>
                 </tr>
               </thead>
@@ -638,7 +683,55 @@ function ImportQuestions({ onClose, onImported }: { onClose: () => void; onImpor
                 {preview.rows.map((row) => (
                   <tr key={row.row}>
                     <td>{row.row}</td>
-                    <td>{row.question.stem?.replace(/<[^>]*>/g, '').slice(0, 110)}</td>
+                    <td>
+                      <strong>{row.question.publicId || `Row ${row.row}`}</strong>
+                      <p>{row.question.stem?.replace(/<[^>]*>/g, '').slice(0, 110)}</p>
+                    </td>
+                    <td className="import-row-images">
+                      <div className="import-row-thumbnails">
+                        {row.question.images
+                          ?.slice(0, 10)
+                          .map((url, index) =>
+                            /^(https:\/\/|\/(?:assets|uploads)\/)/.test(url) ? (
+                              <img
+                                key={`${index}:${url}`}
+                                src={url}
+                                alt={`Imported image ${index + 1} for ${row.question.publicId || row.row}`}
+                                loading="lazy"
+                                onError={() =>
+                                  setFailedImageRows((previous) => new Set([...previous, row.row]))
+                                }
+                              />
+                            ) : null,
+                          )}
+                      </div>
+                      <span
+                        className={
+                          row.imageErrors?.length || failedImageRows.has(row.row)
+                            ? 'validation-error'
+                            : 'fine-print'
+                        }
+                      >
+                        {row.imageErrors?.length || failedImageRows.has(row.row)
+                          ? 'Image needs attention'
+                          : row.question.images?.length
+                            ? `${row.question.images.length} image${row.question.images.length === 1 ? '' : 's'}`
+                            : 'No image detected'}
+                      </span>
+                      <button
+                        className="secondary small"
+                        disabled={busy || repairingRow !== null}
+                        aria-label={`${row.imageErrors?.length || failedImageRows.has(row.row) ? 'Repair' : row.question.images?.length ? 'Edit' : 'Attach'} images for ${row.question.publicId || `row ${row.row}`}`}
+                        onClick={() => setRepairingRow(row.row)}
+                      >
+                        <ImagePlus size={15} />
+                        {row.imageErrors?.length || failedImageRows.has(row.row)
+                          ? 'Repair images'
+                          : row.question.images?.length
+                            ? 'Edit images'
+                            : 'Attach images manually'}
+                      </button>
+                    </td>
                     <td>
                       {row.errors.length ? (
                         <span className="validation-error">{row.errors.join('; ')}</span>
@@ -653,11 +746,38 @@ function ImportQuestions({ onClose, onImported }: { onClose: () => void; onImpor
               </tbody>
             </table>
           </div>
+          {repairingRow !== null &&
+            (() => {
+              const row = preview.rows.find((item) => item.row === repairingRow)!;
+              return (
+                <QuestionImages
+                  key={row.row}
+                  questionId={row.question.publicId || `Row ${row.row}`}
+                  images={row.question.images || []}
+                  onSave={saveImages}
+                  onCancel={() => setRepairingRow(null)}
+                  onBusyChange={setUploadingImages}
+                />
+              );
+            })()}
+          {hasFailedReadyImages && (
+            <p className="validation-error">
+              Some image previews could not load. Repair or remove those images before confirming.
+            </p>
+          )}
           <div className="modal-footer">
-            <button className="secondary" onClick={() => setPreview(null)}>
+            <button
+              className="secondary"
+              disabled={busy || repairingRow !== null}
+              onClick={() => setPreview(null)}
+            >
               Choose another file
             </button>
-            <button className="primary" disabled={!preview.valid || busy} onClick={confirm}>
+            <button
+              className="primary"
+              disabled={!preview.valid || busy || repairingRow !== null || hasFailedReadyImages}
+              onClick={confirm}
+            >
               <Check size={17} />
               {busy ? 'Importing…' : 'Confirm valid questions'}
             </button>
@@ -943,7 +1063,16 @@ export function QuestionBank() {
           <QuestionReview question={view} onRetry={() => retry(view.id)} />
         </Modal>
       )}
-      {importing && <ImportQuestions onClose={() => setImporting(false)} onImported={reload} />}
+      {importing && (
+        <ImportQuestions
+          onClose={() => setImporting(false)}
+          onImported={reload}
+          onManualEntry={() => {
+            setImporting(false);
+            setEdit(true);
+          }}
+        />
+      )}
     </>
   );
 }

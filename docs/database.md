@@ -1,6 +1,6 @@
 # Database and historical integrity
 
-`server/db.ts` creates schema version 1 through a transaction and records it in `schema_migrations`. Run `npm run db:migrate`; startup also applies unapplied migrations. `npm run db:seed` adds original content and taxonomy idempotently. It never creates fake student progress.
+`server/db.ts` applies versioned transactional migrations and records them in `schema_migrations`. Version 1 creates the base schema; version 2 adds user-owned image-upload metadata in `question_assets`. Run `npm run db:migrate`; startup also applies unapplied migrations. `npm run db:seed` adds original content and taxonomy idempotently. It never creates fake student progress.
 
 SQLite defaults to `data/sat.sqlite`, uses foreign keys and WAL, and serializes connection access. Set `DATABASE_URL` for the same Knex schema and queries to use PostgreSQL. This is a real runtime adapter, not an exported SQL sketch. PostgreSQL requires an externally running database; see verification for its current test status.
 
@@ -19,6 +19,7 @@ SQLite defaults to `data/sat.sqlite`, uses foreign keys and WAL, and serializes 
 | bookmarks         | Unique user/question collection                                                                                             |
 | error_logs        | Original question version/attempt/answer, reason, retry count, review state and due date                                    |
 | import_jobs       | User-owned validated preview and permanent confirmation report                                                              |
+| question_assets   | Upload owner, original filename, generated image URL, byte size, media type, and upload time                                |
 
 Archives are logical. Student private questions stay owned by that student; shared questions are editable only through authorized server routes. Attempts reference old versions even after edits and archives. User role changes invalidate existing sessions.
 

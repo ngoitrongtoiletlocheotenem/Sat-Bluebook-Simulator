@@ -6,9 +6,10 @@ import multer from 'multer';
 import bcrypt from 'bcryptjs';
 import { z, ZodError } from 'zod';
 import { randomUUID } from 'node:crypto';
-import { mkdirSync, writeFileSync, existsSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { mkdirSync, writeFileSync, existsSync, unlinkSync } from 'node:fs';
+import { basename, resolve } from 'node:path';
 import type { Knex } from 'knex';
+import type { QuestionAsset } from '../shared/types.js';
 import {
   authenticated,
   authentication,
@@ -38,7 +39,14 @@ import {
 } from './attempts.js';
 import { dashboard, errorItems, history } from './analytics.js';
 import { listBlueprints, saveBlueprint } from './blueprints.js';
-import { confirmImport, exportQuestions, parseFile, previewImport, template } from './imports.js';
+import {
+  confirmImport,
+  exportQuestions,
+  parseFile,
+  patchImportImages,
+  previewImport,
+  template,
+} from './imports.js';
 import { now } from './db.js';
 import { statistics } from './statistics.js';
 import { loadTaxonomy, updateTaxonomy } from './taxonomy-management.js';
@@ -47,6 +55,7 @@ const user = (req: Request) => (req as AuthRequest).user;
 const param = (req: Request, key = 'id') => String(req.params[key]);
 const upload = multer({
   storage: multer.memoryStorage(),
+  defParamCharset: 'utf8',
   limits: { fileSize: 5 * 1024 * 1024, files: 1, fields: 10 },
 });
 export function createApp(db: Knex) {
@@ -345,6 +354,9 @@ export function createApp(db: Knex) {
       ),
     );
   });
+  app.patch('/api/imports/:id/rows/:row/images', async (req, res) =>
+    res.json(await patchImportImages(db, user(req), param(req), Number(param(req, 'row')), req.body)),
+  );
   app.post('/api/imports/:id/confirm', async (req, res) =>
     res.json(await confirmImport(db, user(req), param(req), req.body.skipDuplicates !== false)),
   );
@@ -357,6 +369,24 @@ export function createApp(db: Knex) {
       .type('json')
       .set('Content-Disposition', 'attachment; filename="import-report.json"')
       .send(job.report || '{}');
+  });
+  app.get('/api/assets', async (req, res) => {
+    const { page, pageSize } = z
+      .object({
+        page: z.coerce.number().int().min(1).max(1_000_000).default(1),
+        pageSize: z.coerce.number().int().min(1).max(100).default(50),
+      })
+      .parse(req.query);
+    const query = db('question_assets').where({ owner_id: user(req).id });
+    const count = await query.clone().count({ total: '*' }).first();
+    const items: QuestionAsset[] = await query
+      .clone()
+      .select('id', 'name', 'url', 'size', 'mime_type as mimeType', 'created_at as createdAt')
+      .orderBy('created_at', 'desc')
+      .orderBy('id', 'desc')
+      .limit(pageSize)
+      .offset((page - 1) * pageSize);
+    res.json({ items, total: Number(count?.total || 0), page, pageSize });
   });
   app.post('/api/assets', upload.single('file'), async (req, res) => {
     const file = req.file;
@@ -373,9 +403,37 @@ export function createApp(db: Knex) {
     if (!kind) throw new ApiError(415, 'Only PNG, JPEG, and WebP images are supported');
     const directory = resolve(process.env.UPLOAD_DIR || 'data/uploads');
     mkdirSync(directory, { recursive: true });
-    const filename = `${randomUUID()}.${kind}`;
-    writeFileSync(resolve(directory, filename), b);
-    res.status(201).json({ url: `/uploads/${filename}` });
+    const id = randomUUID();
+    const filename = `${id}.${kind}`;
+    const path = resolve(directory, filename);
+    const asset: QuestionAsset = {
+      id,
+      name:
+        basename(file.originalname.replace(/\\/g, '/'))
+          .replace(/[\u0000-\u001f\u007f]/g, '')
+          .trim()
+          .slice(0, 255) || `image.${kind}`,
+      url: `/uploads/${filename}`,
+      size: b.length,
+      mimeType: kind === 'jpg' ? 'image/jpeg' : `image/${kind}`,
+      createdAt: now(),
+    };
+    writeFileSync(path, b, { flag: 'wx' });
+    try {
+      await db('question_assets').insert({
+        id: asset.id,
+        owner_id: user(req).id,
+        name: asset.name,
+        url: asset.url,
+        size: asset.size,
+        mime_type: asset.mimeType,
+        created_at: asset.createdAt,
+      });
+    } catch (error) {
+      unlinkSync(path);
+      throw error;
+    }
+    res.status(201).json(asset);
   });
   app.use('/api', (_req, res) => res.status(404).json({ error: 'API route not found' }));
   app.use(

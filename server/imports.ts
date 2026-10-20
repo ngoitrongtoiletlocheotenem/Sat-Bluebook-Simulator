@@ -1,8 +1,11 @@
 import type { Knex } from 'knex';
 import { randomUUID, createHash } from 'node:crypto';
+import { realpath, stat } from 'node:fs/promises';
+import { isAbsolute, relative, resolve } from 'node:path';
+import { z } from 'zod';
 import ExcelJS from 'exceljs';
 import { parse } from 'csv-parse/sync';
-import type { ImportPreview, ImportRow, Question, User } from '../shared/types.js';
+import type { Domain, ImportPreview, ImportRow, Question, User } from '../shared/types.js';
 import { questionSchema, ApiError } from './validation.js';
 import { createQuestion, questionQuery, toQuestion } from './questions.js';
 import { encode, json, now } from './db.js';
@@ -116,6 +119,78 @@ function decodeRow(row: Record<string, any>, mapping: Record<string, string> = {
   if (q.private !== undefined) q.private = q.private === true || q.private === 'true';
   return q;
 }
+function within(root: string, path: string) {
+  const part = relative(root, path);
+  return (
+    part !== '..' && !part.startsWith(`..${process.platform === 'win32' ? '\\' : '/'}`) && !isAbsolute(part)
+  );
+}
+async function imageReferenceErrors(images: unknown): Promise<string[]> {
+  if (!Array.isArray(images)) return [];
+  const errors: string[] = [];
+  for (const [index, image] of images.slice(0, 10).entries()) {
+    if (typeof image !== 'string' || !image) continue;
+    if (image.startsWith('https://')) {
+      try {
+        if (!new URL(image).hostname) throw new Error('Missing hostname');
+      } catch {
+        errors.push(`images.${index}: Invalid HTTPS image URL`);
+      }
+      continue;
+    }
+    const match = /^\/(assets|uploads)\/([a-zA-Z0-9_./-]+)$/.exec(image);
+    if (!match) continue; // The question schema reports unsupported URL formats.
+    const root = resolve(match[1] === 'uploads' ? process.env.UPLOAD_DIR || 'data/uploads' : 'public/assets');
+    const path = resolve(root, match[2]!);
+    if (!within(root, path)) {
+      errors.push(`images.${index}: Image path must stay inside /${match[1]}/`);
+      continue;
+    }
+    try {
+      const [realRoot, realPath] = await Promise.all([realpath(root), realpath(path)]);
+      if (!within(realRoot, realPath) || !(await stat(realPath)).isFile())
+        throw new Error('Not an image file');
+    } catch {
+      errors.push(`images.${index}: Local image not found: ${image}`);
+    }
+  }
+  return errors;
+}
+async function validateImportRow(row: Record<string, any>, taxonomy: Domain[]) {
+  const valid = questionSchema.safeParse(row);
+  const issues = valid.success ? [] : valid.error.issues;
+  const describe = (issue: (typeof issues)[number]) =>
+    `${issue.path.join('.') || 'question'}: ${issue.message}`;
+  const schemaImageErrors = issues.filter((issue) => issue.path[0] === 'images').map(describe);
+  const imageErrors = [...schemaImageErrors, ...(await imageReferenceErrors(row.images))];
+  const errors = [
+    ...issues.map(describe),
+    ...imageErrors.filter((error) => !schemaImageErrors.includes(error)),
+  ];
+  if (!taxonomy.some((d) => d.id === row.domainId && d.section === row.section))
+    errors.push('Domain does not match section');
+  if (!taxonomy.some((d) => d.id === row.domainId && d.skills.some((s) => s.id === row.skillId)))
+    errors.push('Skill does not match domain');
+  if (
+    row.type === 'mcq' &&
+    Array.isArray(row.choices) &&
+    row.choices.some((c: any) => !String(c?.text || '').trim())
+  )
+    errors.push('All four answer choices require text');
+  return {
+    question: (valid.success ? valid.data : row) as Partial<Question>,
+    errors,
+    imageErrors,
+    schemaImageErrors,
+  };
+}
+function importTotals(rows: ImportRow[]) {
+  return {
+    valid: rows.filter((row) => !row.errors.length && !row.duplicate).length,
+    invalid: rows.filter((row) => row.errors.length).length,
+    duplicates: rows.filter((row) => row.duplicate).length,
+  };
+}
 export async function parseFile(buffer: Buffer, filename: string): Promise<Record<string, any>[]> {
   if (/\.json$/i.test(filename)) {
     let value: any;
@@ -186,39 +261,27 @@ export async function previewImport(
   const existing = await questionQuery(db, user),
     ids = new Set<string>(existing.map((r) => r.public_id)),
     fingerprints = new Set(existing.map((r) => fingerprint(json(r.content))));
-  const previewRows: ImportRow[] = rows.map((raw, index) => {
-    const row = decodeRow(raw, mapping);
-    row.private = scope !== 'global';
-    const valid = questionSchema.safeParse(row),
-      errors = valid.success
-        ? []
-        : valid.error.issues.map((i) => `${i.path.join('.') || 'question'}: ${i.message}`);
-    if (!taxonomy.some((d) => d.id === row.domainId && d.section === row.section))
-      errors.push('Domain does not match section');
-    if (!taxonomy.some((d) => d.id === row.domainId && d.skills.some((s) => s.id === row.skillId)))
-      errors.push('Skill does not match domain');
-    if (
-      row.type === 'mcq' &&
-      Array.isArray(row.choices) &&
-      row.choices.some((c: any) => !String(c?.text || '').trim())
-    )
-      errors.push('All four answer choices require text');
-    const duplicate = ids.has(row.publicId) || fingerprints.has(fingerprint(row));
-    ids.add(row.publicId);
-    fingerprints.add(fingerprint(row));
-    return {
-      row: index + 2,
-      question: (valid.success ? valid.data : row) as Partial<Question>,
-      errors,
-      duplicate,
-    };
-  });
+  const previewRows: ImportRow[] = await Promise.all(
+    rows.map(async (raw, index) => {
+      const row = decodeRow(raw, mapping);
+      row.private = scope !== 'global';
+      const duplicate = ids.has(row.publicId) || fingerprints.has(fingerprint(row));
+      ids.add(row.publicId);
+      fingerprints.add(fingerprint(row));
+      const { question, errors, imageErrors } = await validateImportRow(row, taxonomy);
+      return {
+        row: index + 2,
+        question,
+        errors,
+        imageErrors,
+        duplicate,
+      };
+    }),
+  );
   const preview: ImportPreview = {
     id: randomUUID(),
     rows: previewRows,
-    valid: previewRows.filter((r) => !r.errors.length && !r.duplicate).length,
-    invalid: previewRows.filter((r) => r.errors.length).length,
-    duplicates: previewRows.filter((r) => r.duplicate).length,
+    ...importTotals(previewRows),
     columns: Object.keys(rows[0] || {}),
   };
   await db('import_jobs').insert({
@@ -229,6 +292,46 @@ export async function previewImport(
     created_at: now(),
   });
   return preview;
+}
+export async function patchImportImages(
+  db: Knex,
+  user: User,
+  id: string,
+  rowNumber: number,
+  input: unknown,
+): Promise<ImportPreview> {
+  return db.transaction(async (trx) => {
+    const query = trx('import_jobs').where({ id, user_id: user.id });
+    if (db.client.config.client === 'pg') query.forUpdate();
+    const job = await query.first();
+    if (!job) throw new ApiError(404, 'Import not found');
+    if (job.status !== 'preview') throw new ApiError(409, 'Only an unconfirmed import can be repaired');
+    const preview = json<ImportPreview & { scope: string }>(job.preview);
+    if (preview.scope === 'global' && user.role === 'student')
+      throw new ApiError(403, 'Shared import permission required');
+    const target = preview.rows.find((row) => row.row === rowNumber);
+    if (!target) throw new ApiError(404, 'Import row not found');
+    const { images } = z
+      .object({ images: z.array(z.string().min(1).max(2000)).max(10) })
+      .strict()
+      .parse(input);
+    const question = { ...target.question, images };
+    const { errors, imageErrors, schemaImageErrors } = await validateImportRow(
+      question,
+      await loadTaxonomy(trx),
+    );
+    if (schemaImageErrors.length) throw new ApiError(422, schemaImageErrors.join('; '));
+    // Revalidate without rewriting any other question content or duplicate decisions.
+    target.question = question;
+    target.errors = errors;
+    target.imageErrors = imageErrors;
+    Object.assign(preview, importTotals(preview.rows));
+    await trx('import_jobs')
+      .where({ id, user_id: user.id, status: 'preview' })
+      .update({ preview: encode(preview) });
+    const { scope: _scope, ...result } = preview;
+    return result;
+  });
 }
 export async function confirmImport(db: Knex, user: User, id: string, skipDuplicates = true) {
   return db.transaction(async (trx) => {
@@ -252,6 +355,12 @@ export async function confirmImport(db: Knex, user: User, id: string, skipDuplic
         continue;
       }
       if (row.duplicate) {
+        skipped++;
+        continue;
+      }
+      const imageErrors = await imageReferenceErrors(row.question.images);
+      if (imageErrors.length) {
+        errors.push({ row: row.row, errors: imageErrors });
         skipped++;
         continue;
       }

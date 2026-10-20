@@ -27,6 +27,14 @@ export interface Choice {
   text: string;
   rationale?: string;
 }
+export interface QuestionAsset {
+  id: string;
+  name: string;
+  url: string;
+  size: number;
+  mimeType: string;
+  createdAt: string;
+}
 export interface Question {
   id: string;
   publicId: string;
@@ -247,6 +255,7 @@ export interface ImportRow {
   row: number;
   question: Partial<Question>;
   errors: string[];
+  imageErrors?: string[];
   duplicate: boolean;
 }
 export interface ImportPreview {

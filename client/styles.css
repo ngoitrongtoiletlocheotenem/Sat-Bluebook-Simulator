@@ -1527,6 +1527,124 @@ tr:last-child td {
   font-weight: 400;
   color: #495043;
 }
+.import-image-help,
+.import-manual-fallback p,
+.question-image-repair p {
+  font-size: 12px;
+  line-height: 1.65;
+  color: #495043;
+}
+.question-image-repair h3 {
+  font-size: 14px;
+  font-weight: 550;
+  margin: 0 0 8px;
+}
+.image-dropzone {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 24px 16px;
+  border: 1px dashed #a4bb8f;
+  border-radius: 9px;
+  background: #f7faf0;
+  color: #3d5330;
+  text-align: center;
+}
+.image-dropzone.dragging {
+  border-color: #3d6234;
+  background: #e9f2dd;
+}
+.image-dropzone span {
+  font-size: 11px;
+  font-weight: 400;
+}
+.image-dropzone input {
+  width: min(100%, 330px);
+  font-size: 12px;
+  background: white;
+}
+.image-upload-status {
+  font-size: 12px;
+  padding-top: 8px;
+}
+.question-image-repair {
+  padding: 18px;
+  border: 1px solid #e0e6d8;
+  border-radius: 9px;
+  margin: 16px 0 24px;
+  background: white;
+}
+.repair-image-reference {
+  font-family: ui-monospace, monospace;
+  font-size: 11px;
+  font-weight: 400;
+}
+.repair-image-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin: 12px 0;
+}
+.repair-image-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(240px, 100%), 1fr));
+  gap: 16px;
+  margin-bottom: 16px;
+}
+.repair-image-card {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid #dfe7d4;
+  border-radius: 9px;
+  background: white;
+}
+.repair-image-card > img,
+.repair-image-missing {
+  width: 100%;
+  height: 140px;
+  object-fit: contain;
+  background: #f6f7f3;
+  border-radius: 5px;
+}
+.repair-image-missing {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+.repair-image-reference {
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+.import-row-images > span {
+  display: block;
+  margin-bottom: 8px;
+}
+.question-image-repair .fine-print {
+  font-size: 11px;
+}
+.import-row-thumbnails {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+.import-row-thumbnails img {
+  width: 44px;
+  height: 40px;
+  object-fit: contain;
+  background: #f6f7f3;
+}
+.import-manual-fallback {
+  margin: 12px 0;
+}
+.import-preview td > p {
+  margin: 6px 0;
+}
 .import-steps {
   display: flex;
   gap: 15px;
