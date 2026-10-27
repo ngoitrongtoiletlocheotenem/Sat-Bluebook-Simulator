@@ -72,18 +72,21 @@ export async function dashboard(db: Knex, user: User, days?: number): Promise<Da
     .sort((a, b) => a.accuracy - b.accuracy || b.averageMs - a.averageMs)
     .slice(0, 3);
   const recommendations: Dashboard['recommendations'] = [];
+  const availability: any[] = await db('questions')
+    .whereIn(
+      'skill_id',
+      weakest.map((s) => s.id),
+    )
+    .where({ status: 'published' })
+    .where(function () {
+      this.whereNull('owner_id').orWhere('owner_id', user.id);
+    })
+    .groupBy('skill_id')
+    .select('skill_id')
+    .count({ total: 'id' });
+  const availableBySkill = new Map(availability.map((row) => [row.skill_id, Number(row.total)]));
   for (const s of weakest) {
-    const available = Number(
-      (
-        await db('questions')
-          .where({ skill_id: s.id, status: 'published' })
-          .where(function () {
-            this.whereNull('owner_id').orWhere('owner_id', user.id);
-          })
-          .count({ total: 'id' })
-          .first()
-      )?.total || 0,
-    );
+    const available = availableBySkill.get(s.id) || 0;
     if (available)
       recommendations.push({
         title: `Practice ${s.name}`,
@@ -156,11 +159,23 @@ export async function errorItems(
     .orderBy('e.created_at', 'desc')
     .limit(100)
     .offset(Math.max(0, (Number(filters.page) || 1) - 1) * 100);
+  // Fetch only the page's attempt/question pairs, rather than one query per error.
+  // Keep the first response if legacy data repeats a question across modules.
+  const responseRows = rows.length
+    ? await db('responses')
+        .select('attempt_id', 'question_id', 'time_spent_ms')
+        .whereIn(
+          ['attempt_id', 'question_id'],
+          rows.map((r) => [r.attempt_id, r.question_id]),
+        )
+    : [];
+  const elapsed = new Map<string, number>();
+  for (const response of responseRows) {
+    const key = JSON.stringify([response.attempt_id, response.question_id]);
+    if (!elapsed.has(key)) elapsed.set(key, response.time_spent_ms);
+  }
   const items: ErrorItem[] = [];
   for (const r of rows) {
-    const response = await db('responses')
-      .where({ attempt_id: r.attempt_id, question_id: r.question_id })
-      .first();
     const q = { ...json(r.content), id: r.question_id, version: r.version };
     delete q.adminNotes;
     delete q.calibration;
@@ -171,7 +186,7 @@ export async function errorItems(
       answer: r.selected_answer,
       correctAnswer: q.type === 'mcq' ? q.correctAnswer : q.acceptedAnswers.join(' or '),
       createdAt: r.created_at,
-      elapsedMs: response?.time_spent_ms || 0,
+      elapsedMs: elapsed.get(JSON.stringify([r.attempt_id, r.question_id])) || 0,
       reason: r.reason,
       mastered: r.status === 'mastered',
       retryCount: r.retries,

@@ -104,6 +104,7 @@ export interface Module {
 }
 export interface Attempt {
   id: string;
+  revision: number;
   mode: Mode;
   title: string;
   status: 'active' | 'break' | 'paused' | 'completed';

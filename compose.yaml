@@ -10,8 +10,23 @@ services:
     healthcheck:
       test: [CMD-SHELL, pg_isready -U pathwise -d pathwise]
       interval: 10s
+      timeout: 5s
       retries: 10
     restart: unless-stopped
+  migrate:
+    build:
+      context: .
+      args:
+        VITE_DESMOS_API_KEY: ${VITE_DESMOS_API_KEY:-}
+        VITE_DESMOS_API_VERSION: ${VITE_DESMOS_API_VERSION:-1.12}
+    environment:
+      # URL-encode the password component separately when it contains reserved characters.
+      DATABASE_URL: ${COMPOSE_DATABASE_URL:?Set COMPOSE_DATABASE_URL for the internal db service}
+    command: [node, dist-server/cli.js, migrate]
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: 'no'
   web:
     build:
       context: .
@@ -19,20 +34,18 @@ services:
         VITE_DESMOS_API_KEY: ${VITE_DESMOS_API_KEY:-}
         VITE_DESMOS_API_VERSION: ${VITE_DESMOS_API_VERSION:-1.12}
     environment:
-      DATABASE_URL: postgresql://pathwise:${POSTGRES_PASSWORD}@db:5432/pathwise
+      DATABASE_URL: ${COMPOSE_DATABASE_URL:?Set COMPOSE_DATABASE_URL for the internal db service}
       APP_ORIGIN: ${APP_ORIGIN:?Set APP_ORIGIN to the public HTTPS origin}
       TRUST_PROXY: 1
-      SEED_SAMPLE_DATA: ${SEED_SAMPLE_DATA:-true}
-      ADMIN_EMAIL: ${ADMIN_EMAIL:-}
-      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
-      ADMIN_NAME: ${ADMIN_NAME:-Administrator}
+      PG_POOL_MAX: ${PG_POOL_MAX:-10}
+      SEED_SAMPLE_DATA: 'false'
     ports:
       - 127.0.0.1:3001:3001
     volumes:
       - uploads:/app/data/uploads
     depends_on:
-      db:
-        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     restart: unless-stopped
 volumes:
   postgres-data:

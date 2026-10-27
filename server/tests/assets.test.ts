@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import request from 'supertest';
 import { createApp } from '../app.js';
-import { createDatabase, migrate } from '../db.js';
+import { createDatabase, migrate, SCHEMA_VERSION } from '../db.js';
 import { createUser } from '../auth.js';
 import type { QuestionAsset } from '../../shared/types.js';
 
@@ -27,8 +27,18 @@ test('asset migration upgrades version 1 without replacing existing data and is 
     });
     const version1 = await db('schema_migrations').where({ version: 1 }).first();
     // Recreate the exact version-1 schema state of an existing installation.
+    for (const [table, name] of [
+      ['sessions', 'sessions_user_idx'],
+      ['score_results', 'results_user_created_idx'],
+      ['error_logs', 'errors_user_created_idx'],
+      ['attempts', 'attempts_user_started_idx'],
+      ['responses', 'responses_question_idx'],
+    ])
+      await db.schema.alterTable(table, (t) => t.dropIndex([], name));
+    for (const table of ['score_results', 'error_logs', 'attempts'])
+      await db.schema.alterTable(table, (t) => t.index(['user_id']));
     await db.schema.dropTable('question_assets');
-    await db('schema_migrations').where({ version: 2 }).delete();
+    await db('schema_migrations').where('version', '>', 1).delete();
     await migrate(db);
     await migrate(db);
     assert(await db.schema.hasTable('question_assets'));
@@ -36,7 +46,7 @@ test('asset migration upgrades version 1 without replacing existing data and is 
     assert.equal((await db('users').where({ id: user.id }).first()).email, user.email);
     assert.deepEqual(
       (await db('schema_migrations').orderBy('version')).map((row) => row.version),
-      [1, 2],
+      Array.from({ length: SCHEMA_VERSION }, (_, i) => i + 1),
     );
     assert.equal((await db('question_assets')).length, 0);
   } finally {

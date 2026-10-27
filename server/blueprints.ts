@@ -85,21 +85,23 @@ export async function saveBlueprint(db: Knex, user: User, input: unknown, id?: s
   const content = blueprintSchema.parse(input),
     timestamp = now();
   const allIds = content.modules.flatMap((m) => m.questionIds);
+  const questionRows = allIds.length ? await db('questions').whereIn('id', allIds) : [];
+  const questionsById = new Map(questionRows.map((q) => [q.id, q]));
   if (allIds.length) {
-    const qs = await db('questions').whereIn('id', allIds);
+    const qs = questionRows;
     if (
       qs.length !== allIds.length ||
       qs.some((q) => q.status !== 'published' || (q.owner_id && q.owner_id !== user.id))
     )
       throw new ApiError(422, 'Manual blueprint contains unavailable questions');
     for (const m of content.modules)
-      if (m.questionIds.some((qid) => qs.find((q) => q.id === qid)?.section !== m.section))
+      if (m.questionIds.some((qid) => questionsById.get(qid)?.section !== m.section))
         throw new ApiError(422, 'Manual question section does not match module');
   }
   if (content.kind === 'full')
     for (const m of content.modules)
       if (m.questionIds.length) {
-        const qs = await db('questions').whereIn('id', m.questionIds);
+        const qs = m.questionIds.map((qid) => questionsById.get(qid)!);
         if (qs.some((q) => q.owner_id))
           throw new ApiError(422, 'Full SAT forms use the shared question bank');
         for (const quota of quotaCounts(m.section, m.count, m.route))

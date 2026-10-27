@@ -2,8 +2,9 @@ import type { Knex } from 'knex';
 import type { User } from '../shared/types.js';
 import { ApiError } from './validation.js';
 
-// SQLite serializes writers through BEGIN IMMEDIATE. PostgreSQL locks the
-// attempt row, allowing unrelated attempts to progress concurrently.
+// The local queue supplements SQLite's single-connection writer serialization.
+// PostgreSQL locks the owned attempt row before any child rows, coordinating
+// separate processes while unrelated attempts can progress concurrently.
 const queues = new Map<string, Promise<unknown>>();
 export async function withAttemptLock<T>(
   db: Knex,

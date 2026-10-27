@@ -466,14 +466,16 @@ test('administrator bank versions, manual/random blueprints, import formats and 
   const saveOld = await request.patch(`/api/attempts/${oldAttempt.id}`, {
     headers: adminHeaders,
     data: {
+      expectedRevision: oldAttempt.revision,
       moduleId: oldAttempt.module!.id,
       responses: { [created.id]: { ...emptyResponse(), answer: 'A' } },
     },
   });
   expect(saveOld.ok(), await saveOld.text()).toBeTruthy();
+  const savedOld: Attempt = await saveOld.json();
   const finishOld = await request.post(`/api/attempts/${oldAttempt.id}/finish-module`, {
     headers: adminHeaders,
-    data: { moduleId: oldAttempt.module!.id },
+    data: { expectedRevision: savedOld.revision, moduleId: oldAttempt.module!.id },
   });
   expect(finishOld.ok(), await finishOld.text()).toBeTruthy();
   const oldResult: Result = await (await request.get(`/api/attempts/${oldAttempt.id}/result`)).json();
@@ -482,6 +484,7 @@ test('administrator bank versions, manual/random blueprints, import formats and 
   const locked = await request.patch(`/api/attempts/${oldAttempt.id}`, {
     headers: adminHeaders,
     data: {
+      expectedRevision: savedOld.revision,
       moduleId: oldAttempt.module!.id,
       responses: { [created.id]: { ...emptyResponse(), answer: 'B' } },
     },

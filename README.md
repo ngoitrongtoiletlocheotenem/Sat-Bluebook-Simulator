@@ -17,9 +17,9 @@ npm run dev
 
 Open `http://127.0.0.1:5173`. Create an account. The development API runs on port 3001; Vite proxies `/api` and uploaded images. `.env.example` sets the expected development origin. Do not mix `localhost` and `127.0.0.1` origins.
 
-The seed creates original questions covering all eight domains, Reading/Writing MCQ, Math MCQ/SPR, rationales and an original chart, plus a reusable full SAT blueprint. It creates no fabricated score history. Startup migrations and seeding are idempotent. SQLite and uploads live in ignored `data/`.
+The seed creates original questions covering all eight domains, Reading/Writing MCQ, Math MCQ/SPR, rationales and an original chart, plus a reusable full SAT blueprint. It creates no fabricated score history. Development startup migrations and seeding are idempotent. Production startup checks the schema and never migrates or seeds. SQLite and uploads live in ignored `data/`.
 
-For an administrator, temporarily set **your own** `ADMIN_EMAIL`, `ADMIN_PASSWORD` (10+ characters) and optional `ADMIN_NAME` in `.env`, run `npm run admin`, then remove `ADMIN_PASSWORD`. Alternatively, configured bootstrap values create an initial administrator on startup if the email does not exist. New public registrations always receive the student role. Administrators can grant teacher roles from User management. No built-in shared password exists.
+For an administrator, temporarily set **your own** `ADMIN_EMAIL`, `ADMIN_PASSWORD` (10+ characters) and optional `ADMIN_NAME` in `.env`, run `npm run admin` after migrations, then remove `ADMIN_PASSWORD`. Development startup can bootstrap configured accounts; production requires the explicit CLI. New public registrations always receive the student role. Administrators can grant teacher roles from User management. No built-in shared password exists.
 
 ## What to use
 
@@ -33,23 +33,26 @@ For an administrator, temporarily set **your own** `ADMIN_EMAIL`, `ADMIN_PASSWOR
 
 ## Commands
 
-| Command                           | Purpose                                                                 |
-| --------------------------------- | ----------------------------------------------------------------------- |
-| `npm run dev`                     | Vite and API development servers                                        |
-| `npm run db:migrate`              | Versioned schema setup                                                  |
-| `npm run db:seed`                 | Idempotent original sample questions and blueprint                      |
-| `npm run admin`                   | Create admin using environment values                                   |
-| `npm run typecheck`               | Strict TypeScript checks                                                |
-| `npm run lint`                    | ESLint                                                                  |
-| `npm run format` / `format:check` | Prettier                                                                |
-| `npm test`                        | Pure engine and HTTP/database integration tests                         |
-| `npx playwright install chromium` | Install test browser                                                    |
-| `npm run test:desmos`             | Live Desmos and network-recovery smoke against an isolated built server |
-| `npm run test:e2e`                | Isolated complete UI journey and screenshot/PDF evidence                |
-| `npm run build`                   | Typecheck, optimized frontend, bundled server                           |
-| `npm start`                       | Serve production assets and API together                                |
+| Command                                | Purpose                                                                                         |
+| -------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| `npm run dev`                          | Vite and API development servers                                                                |
+| `npm run db:migrate`                   | Versioned schema setup                                                                          |
+| `npm run db:seed`                      | Idempotent original sample questions and blueprint                                              |
+| `npm run admin`                        | Create admin using environment values                                                           |
+| `npm run typecheck`                    | Strict TypeScript checks                                                                        |
+| `npm run lint`                         | ESLint                                                                                          |
+| `npm run format` / `format:check`      | Prettier                                                                                        |
+| `npm test`                             | Pure engine and HTTP/database integration tests                                                 |
+| `npm run test:postgres`                | Real isolated PostgreSQL migrations, concurrency and transfer tests; explicit test URL required |
+| `npm run db:transfer -- <copy.sqlite>` | Offline dry-run; see the transfer runbook before `--apply`                                      |
+| `npm run db:profile`                   | Reproducible synthetic PostgreSQL query measurement                                             |
+| `npx playwright install chromium`      | Install test browser                                                                            |
+| `npm run test:desmos`                  | Live Desmos and network-recovery smoke against an isolated built server                         |
+| `npm run test:e2e`                     | Isolated complete UI journey and screenshot/PDF evidence                                        |
+| `npm run build`                        | Typecheck, optimized frontend, bundled server                                                   |
+| `npm start`                            | Serve production assets and API together                                                        |
 
-E2E tests own ports 5173/3001 and an isolated database. Stop your development servers first. Tests do not overwrite your normal local study database. See [verification](docs/verification.md) for current measured results and [requirements checklist](docs/requirements-checklist.md) for honest feature coverage.
+E2E tests own ports 5173/3001 and an isolated database. Use free ports and preserve any running app. Tests do not overwrite your normal local study database. See [database verification](docs/database-verification.md) for current measured results, [older verification](docs/verification.md) for historical evidence and [requirements checklist](docs/requirements-checklist.md) for feature coverage.
 
 ## Serve the built application locally
 
@@ -61,7 +64,7 @@ npm start
 
 Open `http://127.0.0.1:3001`. Keep `NODE_ENV=development` for a local HTTP preview. An Internet deployment needs HTTPS, `NODE_ENV=production`, a matching public `APP_ORIGIN`, a managed process/reverse proxy, protected database and backups. Production mode uses Secure cookies.
 
-Set `DATABASE_URL=postgresql://...` to use PostgreSQL instead of SQLite. Both use the shared Knex schema/migration and query boundary. `SEED_SAMPLE_DATA=false` disables sample questions. Deployment configuration, Docker/PostgreSQL Compose and backups are documented in [deployment](docs/deployment.md).
+Set `DATABASE_URL=postgresql://...` privately to use PostgreSQL. Both adapters use the shared Knex schema. Before production start, run `node dist-server/cli.js migrate` once; seed/admin are explicit CLI commands. Compose provisions a healthy PostgreSQL service and a completed migration job before the app. See [deployment](docs/deployment.md), the [schema/query audit](docs/database-audit.md) and [SQLite transfer/rollback runbook](docs/database-transfer.md). No automatic live data transfer occurs.
 
 This workspace includes `scripts/start-local.ps1` and `scripts/stop-local.ps1` to run the built application as a hidden local process. The current workspace has local administrator details in the ignored `PRIVATE_LOCAL_ACCESS.md`; never publish this file.
 

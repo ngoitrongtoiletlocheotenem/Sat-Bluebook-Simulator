@@ -3,6 +3,7 @@ export class ApiError extends Error {
   constructor(
     message: string,
     public status: number,
+    public code?: string,
   ) {
     super(message);
   }
@@ -28,6 +29,7 @@ export async function api<T>(path: string, options: RequestInit = {}): Promise<T
     throw new ApiError(
       typeof data.error === 'string' ? data.error : 'Something went wrong. Please try again.',
       response.status,
+      typeof data.code === 'string' ? data.code : undefined,
     );
   if (data.csrfToken) csrfToken = data.csrfToken;
   return data as T;

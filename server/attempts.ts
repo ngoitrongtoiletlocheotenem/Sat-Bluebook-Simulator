@@ -70,11 +70,41 @@ const savedResponseSchema = z.object({
   note: z.string().max(10_000),
   elapsedMs: z.number().int().min(0).max(86_400_000),
 });
-export const attemptSaveSchema = z.object({
+export const attemptRevisionSchema = z.object({
+  expectedRevision: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
+});
+export const attemptTransitionSchema = attemptRevisionSchema.extend({ moduleId: z.string().min(1) });
+export const attemptSaveSchema = attemptRevisionSchema.extend({
   moduleId: z.string(),
   currentQuestion: z.number().int().min(0).optional(),
   responses: z.record(z.string(), savedResponseSchema).optional(),
 });
+// Synchronize deadlines in the parent transaction; reject client work in a savepoint.
+// A conflict must not roll back the server's elapsed-time transitions.
+async function mutateAttempt<T>(
+  db: Knex,
+  user: User,
+  id: string,
+  action: (trx: Knex.Transaction) => Promise<T>,
+): Promise<T> {
+  const outcome = await withAttemptLock(db, user, id, async (trx) => {
+    await synchronizeAttempt(trx, user, id);
+    try {
+      return { value: await trx.transaction(action) };
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 409) return { error };
+      throw error;
+    }
+  });
+  if ('error' in outcome) throw outcome.error;
+  return outcome.value;
+}
+function checkRevision(attempt: any, expectedRevision: number) {
+  if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0)
+    throw new ApiError(400, 'A valid expectedRevision is required');
+  if (Number(attempt.revision) !== expectedRevision)
+    throw new ApiError(409, 'Attempt changed; refresh before saving', 'ATTEMPT_REVISION_CONFLICT');
+}
 type Snapshot = {
   blueprint: Blueprint;
   title: string;
@@ -124,6 +154,15 @@ async function installQuestions(db: Knex, attempt: any, module: any, items: Snap
       position: i,
       updated_at: now(),
     });
+  if (db.client.config.client === 'pg')
+    await db('questions')
+      .whereIn(
+        'id',
+        items.map((q) => q.id),
+      )
+      .orderBy('id')
+      .forUpdate()
+      .select('id');
   await db('questions')
     .whereIn(
       'id',
@@ -471,10 +510,29 @@ async function scoreResult(db: Knex, attempt: any, user: User) {
     report: encode(result),
     created_at: result.completedAt,
   });
+  const questionIds = [...new Set(review.map((item) => item.question.id))].sort();
+  const versions = new Map(
+    (await db('responses').where({ attempt_id: attempt.id }).select('question_id', 'version_id')).map(
+      (row) => [row.question_id, row.version_id],
+    ),
+  );
+  let priorQuery = db('error_logs')
+    .where({ user_id: user.id })
+    .whereIn('question_id', questionIds)
+    .whereNot({ attempt_id: attempt.id })
+    .orderBy('question_id')
+    .orderBy('id');
+  // Attempts can share historical mistakes: lock all prior evidence in a single
+  // deterministic order before updating counters, independently of report order.
+  if (db.client.config.client === 'pg') priorQuery = priorQuery.forUpdate();
+  const priorByQuestion = new Map<string, any[]>();
+  for (const row of await priorQuery) {
+    const rows = priorByQuestion.get(row.question_id) || [];
+    rows.push(row);
+    priorByQuestion.set(row.question_id, rows);
+  }
   for (const item of review) {
-    const priorErrors = await db('error_logs')
-      .where({ user_id: user.id, question_id: item.question.id })
-      .whereNot({ attempt_id: attempt.id });
+    const priorErrors = priorByQuestion.get(item.question.id) || [];
     for (const e of priorErrors)
       await db('error_logs')
         .where({ id: e.id })
@@ -490,9 +548,7 @@ async function scoreResult(db: Knex, attempt: any, user: User) {
           id: randomUUID(),
           user_id: user.id,
           question_id: item.question.id,
-          version_id: (
-            await db('responses').where({ attempt_id: attempt.id, question_id: item.question.id }).first()
-          ).version_id,
+          version_id: versions.get(item.question.id),
           attempt_id: attempt.id,
           selected_answer: item.response.answer,
           due_at: new Date(Date.now() + 86_400_000).toISOString(),
@@ -504,7 +560,7 @@ async function scoreResult(db: Knex, attempt: any, user: User) {
   }
   await db('attempts')
     .where({ id: attempt.id })
-    .update({ status: 'completed', completed_at: result.completedAt });
+    .update({ status: 'completed', completed_at: result.completedAt, revision: attempt.revision + 1 });
 }
 async function closeModule(db: Knex, attempt: any, user: User, closedAt: string) {
   const module = await db('module_attempts')
@@ -514,6 +570,7 @@ async function closeModule(db: Knex, attempt: any, user: User, closedAt: string)
   const rows = await db('responses as r')
     .join('question_versions as v', 'v.id', 'r.version_id')
     .where('r.module_id', module.id)
+    .where('r.attempt_id', attempt.id)
     .select('r.*', 'v.content');
   let correct = 0;
   for (const row of rows) {
@@ -576,7 +633,8 @@ async function startModule(db: Knex, attemptId: string, module: any, start: stri
     });
   await db('attempts')
     .where({ id: attemptId })
-    .update({ status: 'active', break_until: null, paused_at: null });
+    .update({ status: 'active', break_until: null, paused_at: null })
+    .increment('revision', 1);
 }
 // The server owns deadlines. Long offline intervals advance all expired modules
 // using their actual boundaries, so reconnecting never grants extra exam time.
@@ -631,6 +689,7 @@ export async function getAttempt(db: Knex, user: User, id: string): Promise<Atte
   return {
     id,
     mode: attempt.mode,
+    revision: Number(attempt.revision),
     title: snapshot.title,
     status: attempt.status,
     currentModule: attempt.active_module,
@@ -657,8 +716,9 @@ export async function saveAttempt(
   id: string,
   input: z.infer<typeof attemptSaveSchema>,
 ): Promise<Attempt> {
-  if (!db.isTransaction) return withAttemptLock(db, user, id, (trx) => saveAttempt(trx, user, id, input));
+  if (!db.isTransaction) return mutateAttempt(db, user, id, (trx) => saveAttempt(trx, user, id, input));
   const attempt = await synchronizeAttempt(db, user, id);
+  checkRevision(attempt, input.expectedRevision);
   if (attempt.status !== 'active') throw new ApiError(409, 'Attempt is not accepting answers');
   const module = await db('module_attempts')
     .where({ attempt_id: id, position: attempt.active_module })
@@ -667,6 +727,7 @@ export async function saveAttempt(
   const rows = await db('responses as r')
     .join('question_versions as v', 'v.id', 'r.version_id')
     .where('r.module_id', module.id)
+    .where('r.attempt_id', attempt.id)
     .select('r.*', 'v.content');
   if (input.currentQuestion !== undefined && input.currentQuestion >= rows.length)
     throw new ApiError(400, 'Question index is outside this module');
@@ -706,9 +767,17 @@ export async function saveAttempt(
   });
   return getAttempt(db, user, id);
 }
-export async function finishModule(db: Knex, user: User, id: string, moduleId?: string): Promise<Attempt> {
-  if (!db.isTransaction) return withAttemptLock(db, user, id, (trx) => finishModule(trx, user, id, moduleId));
+export async function finishModule(
+  db: Knex,
+  user: User,
+  id: string,
+  moduleId: string,
+  expectedRevision: number,
+): Promise<Attempt> {
+  if (!db.isTransaction)
+    return mutateAttempt(db, user, id, (trx) => finishModule(trx, user, id, moduleId, expectedRevision));
   const attempt = await synchronizeAttempt(db, user, id);
+  checkRevision(attempt, expectedRevision);
   if (attempt.status === 'completed' || attempt.status === 'break') return getAttempt(db, user, id);
   if (attempt.status !== 'active') throw new ApiError(409, 'Resume before submitting');
   const module = await db('module_attempts')
@@ -720,9 +789,16 @@ export async function finishModule(db: Knex, user: User, id: string, moduleId?: 
   });
   return getAttempt(db, user, id);
 }
-export async function continueBreak(db: Knex, user: User, id: string): Promise<Attempt> {
-  if (!db.isTransaction) return withAttemptLock(db, user, id, (trx) => continueBreak(trx, user, id));
+export async function continueBreak(
+  db: Knex,
+  user: User,
+  id: string,
+  expectedRevision: number,
+): Promise<Attempt> {
+  if (!db.isTransaction)
+    return mutateAttempt(db, user, id, (trx) => continueBreak(trx, user, id, expectedRevision));
   const attempt = await synchronizeAttempt(db, user, id);
+  checkRevision(attempt, expectedRevision);
   if (attempt.status !== 'break') return getAttempt(db, user, id);
   const module = await db('module_attempts')
     .where({ attempt_id: id, position: attempt.active_module })
@@ -730,10 +806,18 @@ export async function continueBreak(db: Knex, user: User, id: string): Promise<A
   await startModule(db, id, module, now());
   return getAttempt(db, user, id);
 }
-export async function pauseAttempt(db: Knex, user: User, id: string, resume = false): Promise<Attempt> {
-  if (!db.isTransaction) return withAttemptLock(db, user, id, (trx) => pauseAttempt(trx, user, id, resume));
+export async function pauseAttempt(
+  db: Knex,
+  user: User,
+  id: string,
+  resume: boolean,
+  expectedRevision: number,
+): Promise<Attempt> {
+  if (!db.isTransaction)
+    return mutateAttempt(db, user, id, (trx) => pauseAttempt(trx, user, id, resume, expectedRevision));
   const a = await synchronizeAttempt(db, user, id),
     m = await db('module_attempts').where({ attempt_id: id, position: a.active_module }).first();
+  checkRevision(a, expectedRevision);
   if (a.mode === 'full') throw new ApiError(409, 'Strict full SAT simulations cannot be paused');
   const snapshot = json<any>(a.snapshot);
   if (resume && a.status === 'paused') {
@@ -745,14 +829,16 @@ export async function pauseAttempt(db: Knex, user: User, id: string, resume = fa
             ? new Date(Date.now() + snapshot.pausedRemaining * 1000).toISOString()
             : null,
       });
-    await db('attempts').where({ id }).update({ status: 'active', paused_at: null });
+    await db('attempts')
+      .where({ id })
+      .update({ status: 'active', paused_at: null, revision: a.revision + 1 });
   } else if (!resume && a.status === 'active') {
     snapshot.pausedRemaining = m.deadline
       ? Math.max(0, Math.ceil((Date.parse(m.deadline) - Date.now()) / 1000))
       : 0;
     await db('attempts')
       .where({ id })
-      .update({ status: 'paused', paused_at: now(), snapshot: encode(snapshot) });
+      .update({ status: 'paused', paused_at: now(), snapshot: encode(snapshot), revision: a.revision + 1 });
   } else throw new ApiError(409, 'Attempt cannot perform this pause/resume transition');
   return getAttempt(db, user, id);
 }
@@ -770,9 +856,12 @@ export async function tutorFeedback(
   id: string,
   questionId: string,
   response: Response,
-): Promise<ReviewItem> {
+  expectedRevision: number,
+): Promise<ReviewItem & { revision: number }> {
   if (!db.isTransaction)
-    return withAttemptLock(db, user, id, (trx) => tutorFeedback(trx, user, id, questionId, response));
+    return mutateAttempt(db, user, id, (trx) =>
+      tutorFeedback(trx, user, id, questionId, response, expectedRevision),
+    );
   const a = await ownedAttempt(db, user, id);
   if (a.mode !== 'tutor') throw new ApiError(403, 'Immediate explanations are only available in tutor mode');
   const module = await db('module_attempts').where({ attempt_id: id, position: a.active_module }).first();
@@ -780,7 +869,7 @@ export async function tutorFeedback(
     db,
     user,
     id,
-    attemptSaveSchema.parse({ moduleId: module.id, responses: { [questionId]: response } }),
+    attemptSaveSchema.parse({ expectedRevision, moduleId: module.id, responses: { [questionId]: response } }),
   );
   const r = await db('responses as r')
     .join('question_versions as v', 'v.id', 'r.version_id')
@@ -821,6 +910,12 @@ export async function tutorFeedback(
           updated_at: now(),
         });
   }
-  return { question, response: responseValue(r), correct, moduleId: module.id };
+  return {
+    question,
+    response: responseValue(r),
+    correct,
+    moduleId: module.id,
+    revision: Number((await ownedAttempt(db, user, id)).revision),
+  };
 }
 export { reviewItems, responseValue };

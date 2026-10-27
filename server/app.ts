@@ -28,6 +28,8 @@ import { createQuestion, findQuestion, listQuestions, updateQuestion } from './q
 import {
   attemptInputSchema,
   attemptSaveSchema,
+  attemptRevisionSchema,
+  attemptTransitionSchema,
   continueBreak,
   createAttempt,
   finishModule,
@@ -110,8 +112,13 @@ export function createApp(db: Knex) {
     res.sendFile(resolve('public/desmos-calculator.js'));
   });
   app.get('/api/health', async (_req, res) => {
-    await db.raw('SELECT 1');
-    res.json({ status: 'ok', database: 'connected' });
+    res.set('Cache-Control', 'no-store');
+    try {
+      await db.raw('SELECT 1');
+      res.json({ status: 'ok', database: 'connected' });
+    } catch {
+      res.status(503).json({ status: 'unavailable', database: 'disconnected' });
+    }
   });
   app.use(
     '/api',
@@ -246,23 +253,68 @@ export function createApp(db: Knex) {
     res.json(await saveAttempt(db, user(req), param(req), attemptSaveSchema.parse(req.body))),
   );
   app.post('/api/attempts/:id/finish-module', async (req, res) =>
-    res.json(await finishModule(db, user(req), param(req), req.body?.moduleId)),
+    res.json(
+      await finishModule(
+        db,
+        user(req),
+        param(req),
+        attemptTransitionSchema.parse(req.body).moduleId,
+        attemptTransitionSchema.parse(req.body).expectedRevision,
+      ),
+    ),
   );
   app.post('/api/attempts/:id/submit-module', async (req, res) =>
-    res.json(await finishModule(db, user(req), param(req), req.body?.moduleId)),
+    res.json(
+      await finishModule(
+        db,
+        user(req),
+        param(req),
+        attemptTransitionSchema.parse(req.body).moduleId,
+        attemptTransitionSchema.parse(req.body).expectedRevision,
+      ),
+    ),
   );
   app.post('/api/attempts/:id/continue', async (req, res) =>
-    res.json(await continueBreak(db, user(req), param(req))),
+    res.json(
+      await continueBreak(db, user(req), param(req), attemptRevisionSchema.parse(req.body).expectedRevision),
+    ),
   );
   app.post('/api/attempts/:id/pause', async (req, res) =>
-    res.json(await pauseAttempt(db, user(req), param(req))),
+    res.json(
+      await pauseAttempt(
+        db,
+        user(req),
+        param(req),
+        false,
+        attemptRevisionSchema.parse(req.body).expectedRevision,
+      ),
+    ),
   );
   app.post('/api/attempts/:id/resume', async (req, res) =>
-    res.json(await pauseAttempt(db, user(req), param(req), true)),
+    res.json(
+      await pauseAttempt(
+        db,
+        user(req),
+        param(req),
+        true,
+        attemptRevisionSchema.parse(req.body).expectedRevision,
+      ),
+    ),
   );
   app.post('/api/attempts/:id/tutor', async (req, res) => {
-    const input = z.object({ questionId: z.string(), response: z.unknown() }).parse(req.body);
-    res.json(await tutorFeedback(db, user(req), param(req), input.questionId, input.response as any));
+    const input = attemptRevisionSchema
+      .extend({ questionId: z.string(), response: z.unknown() })
+      .parse(req.body);
+    res.json(
+      await tutorFeedback(
+        db,
+        user(req),
+        param(req),
+        input.questionId,
+        input.response as any,
+        input.expectedRevision,
+      ),
+    );
   });
   app.get('/api/attempts/:id/result', async (req, res) =>
     res.json(await getResult(db, user(req), param(req))),
@@ -456,7 +508,10 @@ export function createApp(db: Knex) {
       return res
         .status(422)
         .json({ error: error.issues.map((i) => `${i.path.join('.') || 'input'}: ${i.message}`).join('; ') });
-    if (error instanceof ApiError) return res.status(error.status).json({ error: error.message });
+    if (error instanceof ApiError)
+      return res
+        .status(error.status)
+        .json({ error: error.message, ...(error.code ? { code: error.code } : {}) });
     if (error instanceof multer.MulterError)
       return res
         .status(error.code === 'LIMIT_FILE_SIZE' ? 413 : 400)

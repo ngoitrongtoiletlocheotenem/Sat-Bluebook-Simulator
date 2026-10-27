@@ -82,6 +82,17 @@ test('authenticated adaptive test lifecycle, durable autosave, question versions
     assert.equal(initial.module.questions[0].correctAnswer, undefined);
     assert.equal(initial.module.questions[0].choices[0].rationale, undefined);
     assert.equal(initial.modules[1].questions, undefined);
+    // Missing revision must fail validation instead of silently reverting to last-write-wins.
+    await agent
+      .patch(`/api/attempts/${initial.id}`)
+      .set('x-csrf-token', csrf)
+      .send({ moduleId: initial.module.id, responses: {} })
+      .expect(422);
+    await agent
+      .post(`/api/attempts/${initial.id}/finish-module`)
+      .set('x-csrf-token', csrf)
+      .send({ moduleId: initial.module.id })
+      .expect(422);
     const q = initial.module.questions[0],
       response = {
         ...emptyResponse(),
@@ -160,7 +171,12 @@ test('authenticated adaptive test lifecycle, durable autosave, question versions
     await agent
       .patch(`/api/attempts/${initial.id}`)
       .set('x-csrf-token', csrf)
-      .send({ moduleId: initial.module.id, currentQuestion: 2, responses: { [q.id]: response } })
+      .send({
+        expectedRevision: initial.revision,
+        moduleId: initial.module.id,
+        currentQuestion: 2,
+        responses: { [q.id]: response },
+      })
       .expect(200);
     const resumed = (await agent.get(`/api/attempts/${initial.id}`).expect(200)).body;
     assert.equal(resumed.currentQuestion, 2);
@@ -172,6 +188,7 @@ test('authenticated adaptive test lifecycle, durable autosave, question versions
       .patch(`/api/attempts/${initial.id}`)
       .set('x-csrf-token', csrf)
       .send({
+        expectedRevision: resumed.revision,
         moduleId: initial.module.id,
         responses: {
           [q.id]: { ...response, highlights: [{ ...response.highlights[0], underlineStyle: 'wavy' }] },
@@ -182,12 +199,16 @@ test('authenticated adaptive test lifecycle, durable autosave, question versions
       (await agent.get(`/api/attempts/${initial.id}`).expect(200)).body.responses[q.id].highlights,
       response.highlights,
     );
-    await agent.post(`/api/attempts/${initial.id}/pause`).set('x-csrf-token', csrf).send({}).expect(409);
+    await agent
+      .post(`/api/attempts/${initial.id}/pause`)
+      .set('x-csrf-token', csrf)
+      .send({ expectedRevision: resumed.revision })
+      .expect(409);
     const second = (
       await agent
         .post(`/api/attempts/${initial.id}/finish-module`)
         .set('x-csrf-token', csrf)
-        .send({ moduleId: initial.module.id })
+        .send({ expectedRevision: resumed.revision, moduleId: initial.module.id })
         .expect(200)
     ).body;
     assert.equal(second.module.route, 'lower');
@@ -195,12 +216,16 @@ test('authenticated adaptive test lifecycle, durable autosave, question versions
     await agent
       .patch(`/api/attempts/${initial.id}`)
       .set('x-csrf-token', csrf)
-      .send({ moduleId: initial.module.id, responses: { [q.id]: response } })
+      .send({
+        expectedRevision: second.revision,
+        moduleId: initial.module.id,
+        responses: { [q.id]: response },
+      })
       .expect(409);
     await agent
       .post(`/api/attempts/${initial.id}/finish-module`)
       .set('x-csrf-token', csrf)
-      .send({ moduleId: initial.module.id })
+      .send({ expectedRevision: second.revision, moduleId: initial.module.id })
       .expect(409);
     let current = second;
     for (let i = 0; i < 3; i++)
@@ -208,7 +233,7 @@ test('authenticated adaptive test lifecycle, durable autosave, question versions
         await agent
           .post(`/api/attempts/${initial.id}/finish-module`)
           .set('x-csrf-token', csrf)
-          .send({ moduleId: current.module.id })
+          .send({ expectedRevision: current.revision, moduleId: current.module.id })
           .expect(200)
       ).body;
     assert.equal(current.status, 'completed');
@@ -343,7 +368,11 @@ test('server deadlines reject late saves and synchronize break/modules without e
     await agent
       .patch(`/api/attempts/${a.id}`)
       .set('x-csrf-token', csrf)
-      .send({ moduleId: a.module.id, responses: { [q.id]: { ...emptyResponse(), answer: 'A' } } })
+      .send({
+        expectedRevision: a.revision,
+        moduleId: a.module.id,
+        responses: { [q.id]: { ...emptyResponse(), answer: 'A' } },
+      })
       .expect(409);
     a = (await agent.get(`/api/attempts/${a.id}`).expect(200)).body;
     assert.equal(a.currentModule, 1);
@@ -352,7 +381,7 @@ test('server deadlines reject late saves and synchronize break/modules without e
       await agent
         .post(`/api/attempts/${a.id}/finish-module`)
         .set('x-csrf-token', csrf)
-        .send({ moduleId: a.module.id })
+        .send({ expectedRevision: a.revision, moduleId: a.module.id })
         .expect(200)
     ).body;
     assert.equal(a.status, 'break');
@@ -367,8 +396,14 @@ test('server deadlines reject late saves and synchronize break/modules without e
     assert(breakDeadline);
     const moduleId = a.module.id;
     const submits = await Promise.all([
-      agent.post(`/api/attempts/${a.id}/finish-module`).set('x-csrf-token', csrf).send({ moduleId }),
-      agent.post(`/api/attempts/${a.id}/finish-module`).set('x-csrf-token', csrf).send({ moduleId }),
+      agent
+        .post(`/api/attempts/${a.id}/finish-module`)
+        .set('x-csrf-token', csrf)
+        .send({ moduleId, expectedRevision: a.revision }),
+      agent
+        .post(`/api/attempts/${a.id}/finish-module`)
+        .set('x-csrf-token', csrf)
+        .send({ moduleId, expectedRevision: a.revision }),
     ]);
     assert.deepEqual(submits.map((r) => r.status).sort(), [200, 409]);
     assert.equal((await agent.get(`/api/attempts/${a.id}`).expect(200)).body.currentModule, 3);
@@ -491,7 +526,7 @@ test('manual and random test blueprints, private bank permissions, tutor feedbac
       await agent
         .post(`/api/attempts/${mixed.id}/finish-module`)
         .set('x-csrf-token', csrf)
-        .send({ moduleId: mixed.module.id })
+        .send({ expectedRevision: mixed.revision, moduleId: mixed.module.id })
         .expect(200)
     ).body;
     assert.equal(mixed.status, 'active');
@@ -519,6 +554,7 @@ test('manual and random test blueprints, private bank permissions, tutor feedbac
         .post(`/api/attempts/${practice.id}/tutor`)
         .set('x-csrf-token', csrf)
         .send({
+          expectedRevision: practice.revision,
           questionId: privateQ.id,
           response: {
             ...emptyResponse(),
@@ -530,12 +566,20 @@ test('manual and random test blueprints, private bank permissions, tutor feedbac
     assert.equal(feedback.correct, true);
     assert(feedback.question.explanation);
     practice = (
-      await agent.post(`/api/attempts/${practice.id}/pause`).set('x-csrf-token', csrf).send({}).expect(200)
+      await agent
+        .post(`/api/attempts/${practice.id}/pause`)
+        .set('x-csrf-token', csrf)
+        .send({ expectedRevision: feedback.revision })
+        .expect(200)
     ).body;
     assert.equal(practice.status, 'paused');
     const remaining = practice.remainingSeconds;
     practice = (
-      await agent.post(`/api/attempts/${practice.id}/resume`).set('x-csrf-token', csrf).send({}).expect(200)
+      await agent
+        .post(`/api/attempts/${practice.id}/resume`)
+        .set('x-csrf-token', csrf)
+        .send({ expectedRevision: practice.revision })
+        .expect(200)
     ).body;
     assert.equal(practice.status, 'active');
     assert(practice.remainingSeconds >= remaining - 1);

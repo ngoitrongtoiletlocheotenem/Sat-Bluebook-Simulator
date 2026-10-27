@@ -2,9 +2,41 @@ import knex, { type Knex } from 'knex';
 import { mkdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 
+export const SCHEMA_VERSION = 3;
+
+function integerSetting(name: string, fallback: number, min: number, max: number) {
+  const value = process.env[name] === undefined ? fallback : Number(process.env[name]);
+  if (!Number.isInteger(value) || value < min || value > max)
+    throw new Error(`${name} must be an integer between ${min} and ${max}.`);
+  return value;
+}
+
 export function createDatabase(filename = process.env.SQLITE_PATH || './data/sat.sqlite'): Knex {
   if (process.env.DATABASE_URL && filename !== ':memory:') {
-    return knex({ client: 'pg', connection: process.env.DATABASE_URL, pool: { min: 0, max: 10 } });
+    return knex({
+      client: 'pg',
+      connection: {
+        connectionString: process.env.DATABASE_URL,
+        connectionTimeoutMillis: integerSetting('PG_CONNECT_TIMEOUT_MS', 5000, 100, 120000),
+        statement_timeout: integerSetting('PG_STATEMENT_TIMEOUT_MS', 30000, 100, 600000),
+        // pg supports this startup setting; Knex's connection interface omits it.
+        ...{ lock_timeout: integerSetting('PG_LOCK_TIMEOUT_MS', 5000, 100, 120000) },
+        idle_in_transaction_session_timeout: integerSetting(
+          'PG_IDLE_TRANSACTION_TIMEOUT_MS',
+          30000,
+          1000,
+          600000,
+        ),
+        application_name: 'pathwise',
+      },
+      acquireConnectionTimeout: integerSetting('PG_ACQUIRE_TIMEOUT_MS', 10000, 100, 120000),
+      pool: {
+        min: 0,
+        max: integerSetting('PG_POOL_MAX', 10, 1, 100),
+        idleTimeoutMillis: integerSetting('PG_IDLE_TIMEOUT_MS', 30000, 1000, 600000),
+      },
+      compileSqlOnError: false,
+    });
   }
   if (filename !== ':memory:') mkdirSync(dirname(resolve(filename)), { recursive: true });
   return knex({
@@ -28,9 +60,30 @@ export const json = <T = any>(value: string | T): T =>
 export const now = () => new Date().toISOString();
 export const encode = (value: unknown) => JSON.stringify(value);
 
+export async function requireCurrentSchema(db: Knex) {
+  const versions = (await db.schema.hasTable('schema_migrations'))
+    ? (await db('schema_migrations').orderBy('version').select('version')).map((row) => Number(row.version))
+    : [];
+  if (versions.length !== SCHEMA_VERSION || versions.some((version, i) => version !== i + 1))
+    throw new Error(
+      'Database schema is out of date. Verify the release and run its one-shot migration command before starting the application.',
+    );
+}
+
 // Portable, versioned migrations. JSON lives in text columns so that the
 // same schema and immutable snapshots work in SQLite and PostgreSQL.
 export async function migrate(db: Knex) {
+  if (db.client.config.client === 'pg') {
+    // Serialize explicit migrators across processes, including first ledger creation.
+    // All DDL remains transactional; the lock is released on commit or rollback.
+    await db.transaction(async (trx) => {
+      await trx.raw('SELECT pg_advisory_xact_lock(734812, 1)');
+      await applyMigrations(trx);
+    });
+  } else await applyMigrations(db);
+}
+
+async function applyMigrations(db: Knex) {
   if (!(await db.schema.hasTable('schema_migrations'))) {
     await db.schema.createTable('schema_migrations', (t) => {
       t.integer('version').primary();
@@ -198,6 +251,30 @@ export async function migrate(db: Knex) {
         t.string('created_at').notNullable();
       });
       await trx('schema_migrations').insert({ version: 2, applied_at: now() });
+    });
+  }
+  if (!(await db('schema_migrations').where({ version: 3 }).first())) {
+    await db.transaction(async (trx) => {
+      // Actual leading predicates/orderings in auth, analytics, statistics and assets.
+      for (const [table, columns, name] of [
+        ['sessions', ['user_id'], 'sessions_user_idx'],
+        ['score_results', ['user_id', 'created_at'], 'results_user_created_idx'],
+        ['error_logs', ['user_id', 'created_at'], 'errors_user_created_idx'],
+        ['attempts', ['user_id', 'started_at'], 'attempts_user_started_idx'],
+        ['responses', ['question_id'], 'responses_question_idx'],
+        ['question_assets', ['owner_id', 'created_at'], 'assets_owner_created_idx'],
+      ] as const) {
+        await trx.schema.alterTable(table, (t) => t.index([...columns], name));
+      }
+      // Composite indexes retain these leading-key lookups without duplicate writes.
+      for (const [table, column] of [
+        ['score_results', 'user_id'],
+        ['error_logs', 'user_id'],
+        ['attempts', 'user_id'],
+        ['question_assets', 'owner_id'],
+      ])
+        await trx.schema.alterTable(table, (t) => t.dropIndex([column]));
+      await trx('schema_migrations').insert({ version: 3, applied_at: now() });
     });
   }
 }

@@ -26,6 +26,8 @@ type Pending = {
   moduleId: string;
   currentQuestion: number;
   responses: Record<string, Response>;
+  expectedRevision: number;
+  // Local queue acknowledgement counter, separate from the persisted server revision.
   revision: number;
 };
 type SelectionAnchor = Omit<Highlight, 'id' | 'color' | 'note'>;
@@ -149,6 +151,7 @@ export default function Player({
   const completed = useRef(false);
   const ownerId = useRef(crypto.randomUUID());
   const readOnly = useRef(false);
+  const writeQueue = useRef<Promise<unknown>>(Promise.resolve());
   const leaseKey = `sat-attempt-owner:${attemptId}`;
 
   function setWindowLock(locked: boolean) {
@@ -199,7 +202,16 @@ export default function Player({
         throw new Error('This attempt is active in another window. Continue here to take over.');
       return action();
     };
-    return navigator.locks ? navigator.locks.request(`sat-attempt-write:${attemptId}`, run) : run();
+    // Web Locks coordinate tabs; this queue also serializes this component when
+    // the browser does not implement Web Locks.
+    const operation = writeQueue.current
+      .catch(() => {})
+      .then(async () => {
+        if (navigator.locks) return await navigator.locks.request(`sat-attempt-write:${attemptId}`, run);
+        return await run();
+      });
+    writeQueue.current = operation;
+    return operation;
   }
 
   function apply(value: Attempt) {
@@ -221,12 +233,13 @@ export default function Player({
   }
   function enqueue(responseId?: string, response?: Response) {
     const active = attemptRef.current;
-    if (!active?.module || active.status !== 'active' || !ownsWindow()) return;
+    if (busyRef.current || !active?.module || active.status !== 'active' || !ownsWindow()) return;
     if (pending.current?.moduleId !== active.module.id)
       pending.current = {
         moduleId: active.module.id,
         currentQuestion: active.currentQuestion,
         responses: {},
+        expectedRevision: active.revision,
         revision: 0,
       };
     const changes = pending.current;
@@ -237,15 +250,14 @@ export default function Player({
     setSaveStatus(navigator.onLine ? 'Saving…' : 'Saved on this device · offline');
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => {
-      void flush().catch((failure: unknown) => {
-        if (failure instanceof ApiError && failure.status === 409) void load();
-      });
+      void flush().catch(() => {});
     }, 500);
   }
   function updateResponse(partial: Partial<Response>, questionId?: string) {
     const active = attemptRef.current;
     const id = questionId || active?.module?.questions?.[active.currentQuestion]?.id;
     if (
+      busyRef.current ||
       !active ||
       !id ||
       !ownsWindow() ||
@@ -266,6 +278,7 @@ export default function Player({
     wasVisible.current = document.visibilityState !== 'hidden';
     const id = active?.module?.questions?.[active.currentQuestion]?.id;
     if (
+      busyRef.current ||
       !active ||
       !ownsWindow() ||
       active.status !== 'active' ||
@@ -291,19 +304,34 @@ export default function Player({
     const snapshot = structuredClone(pending.current);
     const operation = (async () => {
       try {
-        await inWindowLock(() => api<Attempt>(`/attempts/${attemptId}`, json('PATCH', snapshot)));
+        const saved = await inWindowLock(() =>
+          api<Attempt>(`/attempts/${attemptId}`, json('PATCH', snapshot)),
+        );
         if (!ownsWindow()) return;
+        // Keep edits made during the request while advancing their persisted base.
+        if (attemptRef.current) apply({ ...attemptRef.current, revision: saved.revision });
         if (pending.current?.moduleId === snapshot.moduleId) {
           if (pending.current.revision === snapshot.revision) pending.current = null;
-          else
+          else {
+            pending.current.expectedRevision = saved.revision;
             for (const [id, response] of Object.entries(snapshot.responses))
               if (JSON.stringify(pending.current.responses[id]) === JSON.stringify(response))
                 delete pending.current.responses[id];
+          }
           storePending();
         }
         setSaveStatus(pending.current ? 'Saving…' : 'All changes saved');
       } catch (failure) {
-        setSaveStatus('Saved on this device · waiting to reconnect');
+        if (failure instanceof ApiError && failure.status === 409) {
+          // Never rebase whole stale response snapshots onto another device's edits.
+          pending.current = null;
+          storePending();
+          await load(false);
+          setError(
+            'Saved state changed or this module closed. The latest server state was restored. Review your answers before continuing.',
+          );
+          setSaveStatus('Latest saved state restored');
+        } else setSaveStatus('Saved on this device · waiting to reconnect');
         throw failure;
       }
     })();
@@ -315,10 +343,27 @@ export default function Player({
     }
     if (pending.current) await flush();
   }
-  async function load() {
+  async function load(waitForSave = true) {
+    // A GET racing an accepted save could otherwise mistake its new revision
+    // for a remote edit and discard newer local edits awaiting acknowledgement.
+    if (waitForSave && saving.current) {
+      try {
+        await saving.current;
+      } catch {
+        /* The save already reports recovery. */
+      }
+    }
     try {
       setError('');
       const value = await api<Attempt>(`/attempts/${attemptId}`);
+      let recoveryNotice = '';
+      if (pending.current && pending.current.expectedRevision !== value.revision) {
+        pending.current = null;
+        storePending();
+        recoveryNotice =
+          'Saved state changed since these local edits. The latest server state was restored. Review your answers before continuing.';
+        setSaveStatus('Latest saved state restored');
+      }
       if (value.module && pending.current?.moduleId === value.module.id && value.status === 'active') {
         const ids = new Set(value.module.questions?.map((question) => question.id));
         const responses = Object.fromEntries(
@@ -329,13 +374,17 @@ export default function Player({
           0,
           Math.min((value.module.questions?.length || 1) - 1, pending.current.currentQuestion),
         );
-      } else if (pending.current && pending.current.moduleId !== value.module?.id) {
+      } else if (
+        pending.current &&
+        (pending.current.moduleId !== value.module?.id || value.status !== 'active')
+      ) {
         // The server closed this module at its deadline; stale local edits cannot unlock it.
         pending.current = null;
         storePending();
         setSaveStatus('Module closed · latest server state restored');
       }
       apply(value);
+      if (recoveryNotice) setError(recoveryNotice);
       activeSince.current = Date.now();
       if (pending.current && !readOnly.current) void flush().catch(() => {});
     } catch (failure) {
@@ -344,18 +393,21 @@ export default function Player({
   }
   async function transition(path: 'finish-module' | 'continue' | 'pause' | 'resume') {
     if (busyRef.current || !ownsWindow()) return;
+    recordElapsed();
     busyRef.current = true;
     setBusy(true);
     setError('');
     closeAnnotation();
     try {
       const moduleId = attemptRef.current?.module?.id;
-      recordElapsed();
       await flush();
       const value = await inWindowLock(() =>
         api<Attempt>(
           `/attempts/${attemptId}/${path}`,
-          json('POST', path === 'finish-module' ? { moduleId } : undefined),
+          json('POST', {
+            expectedRevision: attemptRef.current?.revision,
+            ...(path === 'finish-module' ? { moduleId } : {}),
+          }),
         ),
       );
       apply(value);
@@ -369,6 +421,9 @@ export default function Player({
     } catch (failure) {
       if (failure instanceof ApiError && failure.status === 409) {
         await load();
+        setError(
+          'Saved state changed or this module closed. The latest server state was restored. Review before continuing.',
+        );
         setReview(false);
         setDialog(null);
         setNavigatorOpen(false);
@@ -393,7 +448,9 @@ export default function Player({
           typeof parsed.moduleId === 'string' &&
           typeof parsed.currentQuestion === 'number' &&
           parsed.responses &&
-          typeof parsed.revision === 'number'
+          typeof parsed.revision === 'number' &&
+          Number.isSafeInteger(parsed.expectedRevision) &&
+          parsed.expectedRevision >= 0
         )
           pending.current = parsed;
       }
@@ -752,24 +809,35 @@ export default function Player({
   }
   async function submitTutor() {
     if (!question || !response.answer || busyRef.current || !ownsWindow()) return;
+    recordElapsed();
     busyRef.current = true;
     setBusy(true);
     setError('');
     try {
-      recordElapsed();
       await flush();
       const result = await inWindowLock(() =>
-        api<ReviewItem>(
+        api<ReviewItem & { revision: number }>(
           `/attempts/${attemptId}/tutor`,
           json('POST', {
+            expectedRevision: attemptRef.current?.revision,
             questionId: question.id,
             response: attemptRef.current?.responses[question.id] || response,
           }),
         ),
       );
+      if (attemptRef.current) apply({ ...attemptRef.current, revision: result.revision });
+      if (pending.current) {
+        pending.current.expectedRevision = result.revision;
+        storePending();
+      }
       setTutorResults((items) => ({ ...items, [question.id]: result }));
     } catch (failure) {
-      setError(failure instanceof Error ? failure.message : 'Could not check your answer.');
+      if (failure instanceof ApiError && failure.status === 409) {
+        await load();
+        setError(
+          'Saved state changed or this module closed. The latest server state was restored. Review before checking again.',
+        );
+      } else setError(failure instanceof Error ? failure.message : 'Could not check your answer.');
     } finally {
       busyRef.current = false;
       setBusy(false);

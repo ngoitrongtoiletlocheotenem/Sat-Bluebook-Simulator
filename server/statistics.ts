@@ -3,29 +3,86 @@ import type { Result } from '../shared/types.js';
 import { json } from './db.js';
 export async function statistics(db: Knex) {
   const users = await db('users').where({ role: 'student' }).select('id', 'name', 'email');
-  const attempts = await db('attempts').select('user_id', 'mode', 'status', 'started_at');
-  const results = await db('score_results')
-    .select('user_id', 'created_at', 'report')
-    .orderBy('created_at', 'desc');
+  const attempts: any[] = await db('attempts')
+    .groupBy('user_id')
+    .select('user_id')
+    .count({ total: 'id' })
+    .sum({ full: db.raw('CASE WHEN mode = ? THEN 1 ELSE 0 END', ['full']) })
+    .max({ last_activity: 'started_at' });
+  const attemptsByUser = new Map(attempts.map((row) => [row.user_id, row]));
+  // Keyset batches bound raw report materialization while preserving complete
+  // historical totals. The initial upper bound keeps concurrent inserts from
+  // extending this scan indefinitely; this endpoint is not a snapshot export.
+  const upper = (await db('score_results').max({ id: 'attempt_id' }).first())?.id;
+  const reportsByUser = new Map<
+    string,
+    {
+      completed: number;
+      total: number;
+      correct: number;
+      latestScore: number | null;
+      scoredAt: string;
+      scoredAttemptId: string;
+    }
+  >();
+  let completedCount = 0,
+    total = 0,
+    correct = 0,
+    cursor: string | undefined;
+  while (upper) {
+    const query = db('score_results')
+      .select('attempt_id', 'user_id', 'created_at', 'report')
+      .where('attempt_id', '<=', upper)
+      .orderBy('attempt_id')
+      .limit(250);
+    if (cursor) query.where('attempt_id', '>', cursor);
+    const rows = await query;
+    for (const row of rows) {
+      const report = json<Result>(row.report);
+      const aggregate = reportsByUser.get(row.user_id) || {
+        completed: 0,
+        total: 0,
+        correct: 0,
+        latestScore: null,
+        scoredAt: '',
+        scoredAttemptId: '',
+      };
+      aggregate.completed++;
+      aggregate.total += report.total;
+      aggregate.correct += report.correct;
+      if (
+        report.totalScore !== null &&
+        report.totalScore !== undefined &&
+        (row.created_at > aggregate.scoredAt ||
+          (row.created_at === aggregate.scoredAt && row.attempt_id > aggregate.scoredAttemptId))
+      ) {
+        aggregate.latestScore = report.totalScore;
+        aggregate.scoredAt = row.created_at;
+        aggregate.scoredAttemptId = row.attempt_id;
+      }
+      reportsByUser.set(row.user_id, aggregate);
+      completedCount++;
+      total += report.total;
+      correct += report.correct;
+    }
+    if (rows.length < 250) break;
+    cursor = rows.at(-1)!.attempt_id;
+  }
   const students = users.map((u) => {
-    const tests = attempts.filter((a) => a.user_id === u.id),
-      reports = results.filter((r) => r.user_id === u.id).map((r) => json<Result>(r.report));
-    const count = reports.reduce((s, r) => s + r.total, 0),
-      correct = reports.reduce((s, r) => s + r.correct, 0);
+    const tests = attemptsByUser.get(u.id),
+      reports = reportsByUser.get(u.id);
+    const count = Number(tests?.total || 0),
+      full = Number(tests?.full || 0);
     return {
       ...u,
-      attempts: tests.length,
-      fullAttempts: tests.filter((a) => a.mode === 'full').length,
-      practiceAttempts: tests.filter((a) => a.mode !== 'full').length,
-      completedAttempts: reports.length,
-      accuracy: count ? correct / count : null,
-      questionsAnswered: count,
-      latestScore: reports.find((r) => r.totalScore !== null)?.totalScore ?? null,
-      lastActivity:
-        tests
-          .map((a) => a.started_at)
-          .sort()
-          .at(-1) || null,
+      attempts: count,
+      fullAttempts: full,
+      practiceAttempts: count - full,
+      completedAttempts: reports?.completed || 0,
+      accuracy: reports?.total ? reports.correct / reports.total : null,
+      questionsAnswered: reports?.total || 0,
+      latestScore: reports?.latestScore ?? null,
+      lastActivity: tests?.last_activity || null,
     };
   });
   const questionRows = await db('questions as q')
@@ -49,14 +106,11 @@ export async function statistics(db: Knex) {
     correct: Number(q.correct || 0),
     accuracy: Number(q.graded) > 0 ? Number(q.correct || 0) / Number(q.graded) : null,
   }));
-  const completed = results.map((r) => json<Result>(r.report)),
-    total = completed.reduce((s, r) => s + r.total, 0),
-    correct = completed.reduce((s, r) => s + r.correct, 0);
   return {
     summary: {
       students: users.length,
-      attempts: attempts.length,
-      completedAttempts: results.length,
+      attempts: attempts.reduce((sum, row) => sum + Number(row.total), 0),
+      completedAttempts: completedCount,
       sharedQuestions: Number(
         (await db('questions').whereNull('owner_id').count({ count: 'id' }).first())?.count || 0,
       ),
